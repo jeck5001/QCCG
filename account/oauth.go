@@ -1,0 +1,338 @@
+package account
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"qoder2api/logger"
+)
+
+// OAuth 认证流程
+// 1. StartLogin: 生成 PKCE 参数，返回登录 URL
+// 2. WaitLogin: 轮询 deviceToken/poll 端点，等待用户授权
+// 3. 获取 device token (dt-xxx)，用于后续 API 调用
+
+const (
+	oauthClientID    = "e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb"
+	deviceLoginBase  = "https://qoder.com/device/selectAccounts"
+	pollEndpoint     = "https://openapi.qoder.sh/api/v1/deviceToken/poll"
+	userinfoEndpoint = "https://openapi.qoder.sh/api/v1/userinfo"
+	planEndpoint     = "https://openapi.qoder.sh/api/v2/user/plan"
+	quotaEndpoint    = "https://openapi.qoder.sh/api/v2/quota/usage"
+)
+
+type pendingOAuth struct {
+	loginID  string
+	nonce    string
+	verifier string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	deadline time.Time
+}
+
+var (
+	pendingMu sync.Mutex
+	pending   *pendingOAuth
+)
+
+// StartLogin 启动 OAuth 登录流程
+// 返回登录 URL，用户需要在浏览器中打开此 URL 完成授权
+func StartLogin() (*OAuthSession, error) {
+	verifier, challenge, err := pkce()
+	if err != nil {
+		return nil, err
+	}
+	nonce := newSimpleID()
+	loginID := newSimpleID()
+
+	params := url.Values{}
+	params.Set("nonce", nonce)
+	params.Set("challenge", challenge)
+	params.Set("challenge_method", "S256")
+	params.Set("client_id", oauthClientID)
+	loginURL := deviceLoginBase + "?" + params.Encode()
+
+	logger.Info("OAuth: StartLogin loginID=%s", loginID)
+
+	pendingMu.Lock()
+	if pending != nil {
+		pending.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	pending = &pendingOAuth{
+		loginID:  loginID,
+		nonce:    nonce,
+		verifier: verifier,
+		ctx:      ctx,
+		cancel:   cancel,
+		deadline: time.Now().Add(10 * time.Minute),
+	}
+	pendingMu.Unlock()
+
+	return &OAuthSession{LoginID: loginID, LoginURL: loginURL}, nil
+}
+
+// WaitLogin 等待用户完成 OAuth 授权
+// 轮询 deviceToken/poll 端点，直到获取到 device token 或超时
+func WaitLogin(loginID string) (*Account, error) {
+	logger.Debug("OAuth: WaitLogin called loginID=%s", loginID)
+
+	pendingMu.Lock()
+	p := pending
+	pendingMu.Unlock()
+
+	if p == nil || p.loginID != loginID {
+		logger.Error("OAuth: no pending login for id %s", loginID)
+		return nil, fmt.Errorf("no pending login for id %s", loginID)
+	}
+
+	logger.Info("OAuth: Starting poll loop")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if time.Now().After(p.deadline) {
+			logger.Error("OAuth: Timeout reached")
+			return nil, fmt.Errorf("oauth login timed out")
+		}
+		select {
+		case <-p.ctx.Done():
+			logger.Info("OAuth: Cancelled")
+			return nil, fmt.Errorf("oauth login cancelled")
+		case <-ticker.C:
+			token, err := pollToken(p.nonce, p.verifier)
+			if err != nil {
+				continue
+			}
+			logger.Info("OAuth: Got token, building account")
+			acct, err := buildAccountFromToken(token)
+			if err != nil {
+				logger.Error("OAuth: Build account error: %v", err)
+				return nil, err
+			}
+			pendingMu.Lock()
+			pending = nil
+			pendingMu.Unlock()
+			logger.Info("OAuth: Success! Account: %s", acct.Name)
+			return acct, nil
+		}
+	}
+}
+
+func CancelLogin(loginID string) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	if pending != nil && pending.loginID == loginID {
+		pending.cancel()
+		pending = nil
+	}
+}
+
+// pollToken 轮询 deviceToken/poll 端点
+// 返回 device token (dt-xxx)，用于后续 API 调用
+func pollToken(nonce, verifier string) (string, error) {
+	// 使用 GET 请求 + query 参数（参考 cockpit-tools）
+	reqURL := fmt.Sprintf("%s?nonce=%s&verifier=%s&challenge_method=S256",
+		pollEndpoint,
+		url.QueryEscape(nonce),
+		url.QueryEscape(verifier))
+
+	logger.Debug("OAuth: Polling %s", pollEndpoint)
+
+	resp, err := http.Get(reqURL)
+	if err != nil {
+		logger.Error("OAuth: Poll error: %v", err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	logger.Debug("OAuth: Response [%d]: %s", resp.StatusCode, string(raw))
+
+	// 404 表示还没授权，继续等待
+	if resp.StatusCode == 404 {
+		return "", fmt.Errorf("not authorized yet")
+	}
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("poll: HTTP %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", err
+	}
+
+	// 同时返回 device token 和 refresh token
+	deviceToken, _ := result["token"].(string)
+	refreshToken, _ := result["refresh_token"].(string)
+
+	logger.Info("OAuth: Got device token: %s, refresh token: %s",
+		deviceToken[:10]+"...", refreshToken[:10]+"...")
+
+	// 返回 device token（用于直接调用 API）
+	if deviceToken == "" {
+		return "", fmt.Errorf("no device token in response")
+	}
+	return deviceToken, nil
+}
+
+// buildAccountFromToken 使用 device token 构建账号信息
+// device token 可以直接作为 Bearer token 调用 Qoder API
+func buildAccountFromToken(deviceToken string) (*Account, error) {
+	// 使用 device token 直接调用 API
+	// device token 可以作为 Bearer token 使用
+	info, err := fetchUserInfo(deviceToken)
+	if err != nil {
+		return nil, fmt.Errorf("fetch user info: %w", err)
+	}
+	plan := fetchPlan(deviceToken)
+
+	id := SanitizeID(strGet(info, "userId") + strGet(info, "email"))
+	if id == "" {
+		id = newSimpleID()
+	}
+	now := time.Now()
+	acct := &Account{
+		ID:        id,
+		Name:      strGet(info, "name"),
+		Email:     strings.ToLower(strGet(info, "email")),
+		UserType:  strGet(info, "userType"),
+		Plan:      plan,
+		AuthMode:  "oauth",
+		APIMode:   "openai", // 默认使用 OpenAI 格式
+		Tags:      []string{},
+		CreatedAt: now,
+	}
+	// 保存 device token（用于后续 API 调用）
+	if err := SaveSecret(id, deviceToken); err != nil {
+		return nil, err
+	}
+	return acct, nil
+}
+
+func fetchUserInfo(token string) (map[string]interface{}, error) {
+	req, _ := http.NewRequest("GET", userinfoEndpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var result map[string]interface{}
+	raw, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(raw, &result)
+	return result, nil
+}
+
+func fetchPlan(token string) string {
+	req, _ := http.NewRequest("GET", planEndpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var result map[string]interface{}
+	raw, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(raw, &result)
+	return strGet(result, "plan_tier_name")
+}
+
+func pkce() (verifier, challenge string, err error) {
+	b := make([]byte, 32)
+	if _, err = rand.Read(b); err != nil {
+		return
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	h := sha256.Sum256([]byte(verifier))
+	challenge = base64.RawURLEncoding.EncodeToString(h[:])
+	return
+}
+
+func newSimpleID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+func strGet(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func FetchQuota(token string) (*QuotaInfo, error) {
+	req, _ := http.NewRequest("GET", quotaEndpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+
+	info := &QuotaInfo{
+		Plan:            fetchPlan(token),
+		IsQuotaExceeded: result["isQuotaExceeded"] == true,
+	}
+
+	if uq := extractBucket(result, "userQuota"); uq != nil {
+		info.UserQuota = uq
+	}
+	if aq := extractBucket(result, "addOnQuota"); aq == nil {
+		if aq2 := extractBucket(result, "addonQuota"); aq2 != nil {
+			info.AddonQuota = aq2
+		}
+	} else {
+		info.AddonQuota = aq
+	}
+
+	return info, nil
+}
+
+func extractBucket(data map[string]interface{}, key string) *QuotaBucket {
+	obj, ok := data[key].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	used := toFloat(obj, "used")
+	total := toFloat(obj, "total")
+	remaining := toFloat(obj, "remaining")
+	if total == 0 && used == 0 && remaining == 0 {
+		return nil
+	}
+	resetTime := ""
+	if v, ok := obj["resetTime"].(string); ok {
+		resetTime = v
+	} else if v, ok := obj["reset_time"].(string); ok {
+		resetTime = v
+	}
+	return &QuotaBucket{Used: used, Total: total, Remaining: remaining, ResetTime: resetTime}
+}
+
+func toFloat(m map[string]interface{}, key string) float64 {
+	switch v := m[key].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	}
+	return 0
+}
