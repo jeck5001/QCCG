@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"qoder2api/logger"
 )
 
 type bearerClient struct {
@@ -156,9 +158,9 @@ func (c *bearerClient) openStreamLines(ctx context.Context, fullURL string, json
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		fmt.Printf("[stream] scanner error: %v\n", err)
+		logger.Error("stream scanner error: %v", err)
 		return err
 	}
-	fmt.Println("[stream] read complete")
+	logger.Debug("stream read complete")
 	return nil
 }

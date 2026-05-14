@@ -6,9 +6,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"qoder2api/logger"
 )
 
 func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	if r.Method != "POST" {
 		w.WriteHeader(405)
 		return
@@ -18,6 +22,10 @@ func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+
+	logger.Info("[Chat] 收到请求 %s %s", r.Method, r.URL.Path)
+	logger.Debug("[Chat] 请求体: %s", string(body))
+
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeErr(w, err)
@@ -28,6 +36,8 @@ func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	incomingMsgs, _ := req["messages"].([]interface{})
 	tools := req["tools"]
 	toolsEnabled := tools != nil
+
+	logger.Info("[Chat] model=%s stream=%v tools=%v msgs=%d", model, stream, toolsEnabled, len(incomingMsgs))
 
 	prompt := extractLatestUserPrompt(incomingMsgs)
 	messages := buildQoderMessages(b.templateMessages(), incomingMsgs, prompt, toolsEnabled)
@@ -64,6 +74,7 @@ func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		if err != nil {
+			logger.Error("[Chat] stream 请求失败: %v (耗时 %dms)", err, time.Since(startTime).Milliseconds())
 			errData, _ := json.Marshal(map[string]interface{}{
 				"error": map[string]interface{}{"message": err.Error(), "type": "qoder_error"},
 			})
@@ -86,6 +97,7 @@ func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if flusher != nil {
 			flusher.Flush()
 		}
+		logger.Info("[Chat] stream 完成 finish=%s tool_calls=%d 耗时=%dms", finishReason, len(toolCallBuf), time.Since(startTime).Milliseconds())
 	} else {
 		var full strings.Builder
 		var toolCallBuf []interface{}
@@ -98,6 +110,7 @@ func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		if err != nil {
+			logger.Error("[Chat] 请求失败: %v (耗时 %dms)", err, time.Since(startTime).Milliseconds())
 			writeErr(w, fmt.Errorf("request failed: %w", err))
 			return
 		}
@@ -118,6 +131,8 @@ func (b *bridge) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			},
 			"usage": map[string]interface{}{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
 		}
+		logger.Info("[Chat] 完成 finish=%s content_len=%d tool_calls=%d 耗时=%dms", finishReason, full.Len(), len(toolCallBuf), time.Since(startTime).Milliseconds())
+		logger.Debug("[Chat] 响应体: %s", func() string { d, _ := json.Marshal(resp); return string(d) }())
 		writeJSON(w, resp)
 	}
 }

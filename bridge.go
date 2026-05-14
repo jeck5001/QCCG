@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	_ "embed"
+
+	"qoder2api/logger"
 )
 
 //go:embed baseprompt.json
@@ -45,7 +47,7 @@ func newBridge(pat string) (*bridge, error) {
 	mtoken := newBase64Token()
 	mtype := newHexToken(18)
 
-	fmt.Printf("[Bridge] Using token: %s (prefix: %s)\n", pat[:10]+"...", pat[:4])
+	logger.Info("Bridge using token: %s (prefix: %s)", pat[:10]+"...", pat[:4])
 
 	var identity authIdentity
 	var name, id string
@@ -53,7 +55,7 @@ func newBridge(pat string) (*bridge, error) {
 	// 判断 token 类型：dt- 开头是 device token，直接使用
 	if strings.HasPrefix(pat, "dt-") {
 		// OAuth device token：直接使用，不调用 exchangeJobToken
-		fmt.Printf("[Bridge] Using OAuth device token directly\n")
+		logger.Info("Bridge using OAuth device token directly")
 		// 使用 device token 获取用户信息
 		userInfo, err := fetchUserInfoWithToken(pat)
 		if err != nil {
@@ -87,7 +89,7 @@ func newBridge(pat string) (*bridge, error) {
 		}
 	}
 
-	fmt.Printf("[bridge] session for %s (%s)\n", name, id)
+	logger.Info("Bridge session for %s (%s)", name, id)
 	sess, err := newSession(identity, mid, mtoken, mtype)
 	if err != nil {
 		return nil, err
@@ -201,7 +203,8 @@ func (b *bridge) callQoder(ctx context.Context, messages []interface{}, model st
 	if len(preview) > 80 {
 		preview = preview[:80] + "..."
 	}
-	fmt.Printf("[bridge] prompt=%s\n", preview)
+	logger.Info("callQoder model=%s prompt=%s", model, preview)
+	logger.Debug("callQoder request body: %s", func() string { d, _ := json.Marshal(body); return string(d) }())
 
 	return b.client.openStreamLines(ctx, qurl, body, extra, func(line string) {
 		if !strings.HasPrefix(line, "data:") {

@@ -6,9 +6,13 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"qoder2api/logger"
 )
 
 func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	if r.Method != "POST" {
 		w.WriteHeader(405)
 		return
@@ -18,6 +22,10 @@ func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
 		writeCodexErr(w, err)
 		return
 	}
+
+	logger.Info("[Codex] 收到请求 %s %s", r.Method, r.URL.Path)
+	logger.Debug("[Codex] 请求体: %s", string(body))
+
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeCodexErr(w, err)
@@ -33,6 +41,8 @@ func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
 	incomingMsgs := codexInputToMessages(req["input"], instructions)
 	prompt := extractLatestUserPrompt(incomingMsgs)
 	messages := buildQoderMessages(b.templateMessages(), incomingMsgs, prompt, toolsEnabled)
+
+	logger.Info("[Codex] model=%s stream=%v tools=%v msgs=%d", model, stream, toolsEnabled, len(incomingMsgs))
 
 	respId := "resp_" + newRequestId()
 	ctx := r.Context()
@@ -99,6 +109,7 @@ func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		if err != nil {
+			logger.Error("[Codex] stream 请求失败: %v (耗时 %dms)", err, time.Since(startTime).Milliseconds())
 			writeEvent("error", map[string]interface{}{
 				"type":    "error",
 				"message": err.Error(),
@@ -160,6 +171,7 @@ func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 		})
+		logger.Info("[Codex] stream 完成 tool_calls=%d 耗时=%dms", len(toolCallBuf), time.Since(startTime).Milliseconds())
 	} else {
 		var full strings.Builder
 		var toolCallBuf []interface{}
@@ -172,6 +184,7 @@ func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 		if err != nil {
+			logger.Error("[Codex] 请求失败: %v (耗时 %dms)", err, time.Since(startTime).Milliseconds())
 			writeCodexErr(w, fmt.Errorf("request failed: %w", err))
 			return
 		}
@@ -210,6 +223,8 @@ func (b *bridge) handleCodexResponses(w http.ResponseWriter, r *http.Request) {
 				"input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
 			},
 		}
+		logger.Info("[Codex] 完成 content_len=%d tool_calls=%d 耗时=%dms", full.Len(), len(toolCallBuf), time.Since(startTime).Milliseconds())
+		logger.Debug("[Codex] 响应体: %s", func() string { d, _ := json.Marshal(resp); return string(d) }())
 		writeJSON(w, resp)
 	}
 }
