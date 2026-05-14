@@ -30,10 +30,11 @@ type Status struct {
 }
 
 type Settings struct {
-	Port                 int    `json:"port"`
-	AutoStart            bool   `json:"auto_start"`
-	LogLevel             string `json:"log_level"`              // "info" | "debug" | "error"
-	QuotaRefreshInterval int    `json:"quota_refresh_interval"` // 秒，0=不自动刷新
+	Port                 int               `json:"port"`
+	AutoStart            bool              `json:"auto_start"`
+	LogLevel             string            `json:"log_level"`              // "info" | "debug" | "error"
+	QuotaRefreshInterval int               `json:"quota_refresh_interval"` // 秒，0=不自动刷新
+	ModelMapping         map[string]string `json:"model_mapping,omitempty"`
 }
 
 type QuotaInfo struct {
