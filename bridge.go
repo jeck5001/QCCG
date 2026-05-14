@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"qoder2api/account"
-
 	_ "embed"
 )
 
@@ -124,7 +122,6 @@ func deepCopyMap(m map[string]interface{}) map[string]interface{} {
 }
 
 func (b *bridge) callQoder(ctx context.Context, messages []interface{}, model string, tools interface{}, onDelta func(bridgeDelta)) error {
-	model = mapModel(model)
 	body := deepCopyMap(b.templateBase)
 
 	nid := newUUID()
@@ -233,28 +230,4 @@ func strValDefault(m map[string]interface{}, key, def string) string {
 		return v
 	}
 	return def
-}
-
-var defaultModelMapping = map[string]string{
-	"claude-opus-4-7":            "ultimate",
-	"claude-opus-4-20250514":     "ultimate",
-	"claude-sonnet-4-6":          "performance",
-	"claude-sonnet-4-20250514":   "performance",
-	"claude-haiku-4-5-20251001":  "lite",
-	"claude-haiku-4-5":           "lite",
-	"claude-3-5-sonnet-20241022": "efficient",
-	"claude-3-5-sonnet-latest":   "efficient",
-}
-
-func mapModel(model string) string {
-	settings, err := account.LoadSettings()
-	if err == nil && settings.ModelMapping != nil {
-		if mapped, ok := settings.ModelMapping[model]; ok && mapped != "" {
-			return mapped
-		}
-	}
-	if mapped, ok := defaultModelMapping[model]; ok {
-		return mapped
-	}
-	return model
 }
