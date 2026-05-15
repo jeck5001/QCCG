@@ -35,7 +35,7 @@ const DEFAULT_MAPPING_BY_AGENT: Record<string, Array<[string, string]>> = {
   gemini: [['gemini', 'performance']],
 }
 
-// 客户端模型名候选（datalist），按 agent 提供建议
+  // 客户端模型名候选，按 agent 提供建议
 const CLIENT_MODEL_OPTIONS_BY_AGENT: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-3-5-sonnet-latest', 'claude-3-5-haiku-20241022'],
   codex: ['gpt', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-codex', 'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini', 'o1', 'o1-mini'],
@@ -61,8 +61,54 @@ const CLAUDE_MODEL_SLOTS: Array<{ envKey: string; fromKey: string }> = [
 const PREVIEW_MAPPING_KEY = '_qoder2api_model_mapping'
 const QODER_API_KEY = 'qoder2api'
 
+interface MappingSelectProps {
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+  placeholder?: string
+}
+
+function MappingSelect({ value, onChange, options, placeholder = '请选择…' }: MappingSelectProps) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const selected = options.find(o => o.value === value)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} className="mapping-custom-select" onClick={() => setOpen(o => !o)}>
+      <span className="mapping-custom-select-value">
+        {selected ? selected.label : <span className="mapping-custom-select-placeholder">{placeholder}</span>}
+      </span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12" style={{ flexShrink: 0, color: 'var(--text-muted)' }}>
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+      {open && (
+        <div className="mapping-custom-dropdown">
+          {options.map(o => (
+            <div
+              key={o.value}
+              className={`mapping-custom-option${o.value === value ? ' selected' : ''}`}
+              onMouseDown={e => { e.stopPropagation(); onChange(o.value); setOpen(false) }}
+            >
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // 把 qoder2api 所需字段注入到配置文件内容（纯前端，不落盘）
-function applyConfigToContent(content: string, format: string, agentType: string, port: number): string {
+function applyConfigToContent(content: string, format: string, agentType: string, port: number, apiKey: string): string {
   const baseURL = `http://127.0.0.1:${port}`
   if (format === 'json') {
     try {
@@ -71,7 +117,7 @@ function applyConfigToContent(content: string, format: string, agentType: string
       const env = obj['env'] as Record<string, string>
       if (agentType === 'claude') {
         env['ANTHROPIC_BASE_URL'] = baseURL
-        env['ANTHROPIC_AUTH_TOKEN'] = QODER_API_KEY
+        env['ANTHROPIC_AUTH_TOKEN'] = apiKey
       }
       return JSON.stringify(obj, null, 2) + '\n'
     } catch { return content }
@@ -89,7 +135,7 @@ function applyConfigToContent(content: string, format: string, agentType: string
       !l.startsWith('GOOGLE_GEMINI_BASE_URL=') && !l.startsWith('GEMINI_API_KEY=')
     )
     lines.push(`GOOGLE_GEMINI_BASE_URL=${baseURL}`)
-    lines.push(`GEMINI_API_KEY=${QODER_API_KEY}`)
+    lines.push(`GEMINI_API_KEY=${apiKey}`)
     return lines.join('\n') + '\n'
   }
   return content
@@ -347,19 +393,20 @@ export default function ClientConfigPage() {
   const handleApply = async (cfg: ClientConfig) => {
     if (!fileMeta?.format) return
     const fmt = fileMeta.format
-    let applied = applyConfigToContent(fileContent, fmt, cfg.type, status.port)
-    // 优先用内存中已编辑但未保存的映射，保证"填好映射 → 一键配置"能立即看到效果
+    let apiKey = QODER_API_KEY
     let bucket: Record<string, string> | undefined = pendingMapping?.[cfg.type]
-    if (!bucket) {
-      try {
-        const s = await GetSettings()
+    try {
+      const s = await GetSettings()
+      apiKey = s?.bridge_token || QODER_API_KEY
+      if (!bucket) {
         const all = ((s?.model_mappings || {}) as Record<string, Record<string, string>>)
         bucket = all[cfg.type]
         if (!bucket && cfg.type === 'claude' && s?.model_mapping && Object.keys(s.model_mapping).length > 0) {
           bucket = s.model_mapping
         }
-      } catch { /* 拉取失败则不注入映射 */ }
-    }
+      }
+    } catch { /* 拉取失败则使用默认值 */ }
+    let applied = applyConfigToContent(fileContent, fmt, cfg.type, status.port, apiKey)
     applied = patchMappingPreview(applied, fmt, bucket || {}, cfg.type)
     setFileContent(applied)
     setFileDirty(true)
@@ -571,6 +618,7 @@ export default function ClientConfigPage() {
                 <span>{fileError}</span>
               </div>
             )}
+            <div style={{ marginTop: 10 }}>
             <ConfigEditor
               ref={editorRef}
               value={fileContent}
@@ -579,6 +627,7 @@ export default function ClientConfigPage() {
               placeholderText={fileLoading ? '加载中…' : '配置文件内容…'}
               minLines={16}
             />
+            </div>
 
           </div>
         </div>
@@ -658,7 +707,6 @@ function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingCle
     onPatchPreview(next)
   }, [rows, touched])
 
-  const datalistId = `mapping-${agent}-options`
   const candidates = CLIENT_MODEL_OPTIONS_BY_AGENT[agent] || []
 
   const markTouched = () => { if (!touched) setTouched(true) }
@@ -695,63 +743,45 @@ function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingCle
       {rows.length === 0 ? (
         <div className="mapping-empty">未配置自定义映射，将使用内置默认表（{(DEFAULT_MAPPING_BY_AGENT[agent] || []).map(([f, t]) => `${f}→${t}`).join(' / ') || '无'}）</div>
       ) : (
-        <table className="mapping-table">
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.id}>
-                <td>
-                  <input
-                    type="text"
-                    className="setting-input"
-                    placeholder="例如 sonnet 或 claude-sonnet-4-6"
-                    list={datalistId}
-                    value={r.from}
-                    onChange={e => updateRow(r.id, 'from', e.target.value)}
-                  />
-                </td>
-                <td className="arrow">→</td>
-                <td>
-                  {qoderModels.length > 0 ? (
-                    <select
-                      className="setting-select"
-                      value={r.to}
-                      onChange={e => updateRow(r.id, 'to', e.target.value)}
-                    >
-                      <option value="">请选择…</option>
-                      {qoderModels.map(m => (
-                        <option key={m.key} value={m.key}>{m.display_name} ({m.key}){m.is_default ? ' · 默认' : ''}</option>
-                      ))}
-                      {r.to && !qoderModels.some(m => m.key === r.to) && (
-                        <option value={r.to}>{r.to}（自定义/已下线）</option>
-                      )}
-                    </select>
-                  ) : (
-                    <select
-                      className="setting-select"
-                      value={r.to}
-                      onChange={e => updateRow(r.id, 'to', e.target.value)}
-                    >
-                      <option value="">请选择…</option>
-                      {FALLBACK_QODER_KEYS.map(k => <option key={k} value={k}>{k}</option>)}
-                    </select>
-                  )}
-                </td>
-                <td className="row-actions">
-                  <button className="btn-icon-sm" onClick={() => removeRow(r.id)} title="删除此行" aria-label="删除">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
-                      <line x1="18" y1="6" x2="6" y2="18"/>
-                      <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="mapping-list">
+          {rows.map(r => (
+            <div key={r.id} className="mapping-row">
+              <MappingSelect
+                value={r.from}
+                onChange={v => updateRow(r.id, 'from', v)}
+                options={candidates.map(c => ({ value: c, label: c }))}
+                placeholder="客户端模型名"
+              />
+              <svg className="mapping-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+                <polyline points="12 5 19 12 12 19"/>
+              </svg>
+              {qoderModels.length > 0 ? (
+                <MappingSelect
+                  value={r.to}
+                  onChange={v => updateRow(r.id, 'to', v)}
+                  options={[
+                    ...qoderModels.map(m => ({ value: m.key, label: `${m.display_name} (${m.key})${m.is_default ? ' · 默认' : ''}` })),
+                    ...(r.to && !qoderModels.some(m => m.key === r.to) ? [{ value: r.to, label: `${r.to}（自定义/已下线）` }] : [])
+                  ]}
+                />
+              ) : (
+                <MappingSelect
+                  value={r.to}
+                  onChange={v => updateRow(r.id, 'to', v)}
+                  options={FALLBACK_QODER_KEYS.map(k => ({ value: k, label: k }))}
+                />
+              )}
+              <button className="mapping-delete-btn" onClick={() => removeRow(r.id)} title="删除此行" aria-label="删除">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
       )}
-      <datalist id={datalistId}>
-        {candidates.map(m => <option key={m} value={m} />)}
-      </datalist>
     </div>
   )
 }

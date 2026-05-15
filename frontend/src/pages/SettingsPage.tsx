@@ -77,31 +77,16 @@ export default function SettingsPage() {
               className="setting-input"
               min="1024"
               max="65535"
+              style={{ width: 90 }}
             />
           </div>
 
           <div className="setting-item">
             <div className="setting-label">
-              <span>Base URL</span>
-              <span className="setting-hint">CLI 工具连接 Bridge 的地址</span>
-            </div>
-            <code className="storage-path" style={{ fontSize: 12 }}>{baseURL}</code>
-          </div>
-
-          <div className="setting-item">
-            <div className="setting-label">
-              <span>Access Token</span>
+              <span>API Key</span>
               <span className="setting-hint">CLI 工具鉴权凭证，空则使用默认值</span>
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input
-                type="text"
-                value={settings.bridge_token || ''}
-                placeholder={effectiveToken}
-                onChange={e => setSettings({...settings, bridge_token: e.target.value} as account.Settings)}
-                className="setting-input"
-                style={{ fontFamily: 'monospace', fontSize: 12 }}
-              />
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1, maxWidth: 320 }}>
               <button
                 className="icon-btn icon-btn-reload"
                 title="自动生成 token"
@@ -109,6 +94,14 @@ export default function SettingsPage() {
               >
                 <RefreshCw size={15} />
               </button>
+              <input
+                type="text"
+                value={settings.bridge_token || ''}
+                placeholder={effectiveToken}
+                onChange={e => setSettings({...settings, bridge_token: e.target.value} as account.Settings)}
+                className="setting-input"
+                style={{ fontFamily: 'monospace', fontSize: 12, flex: 1, minWidth: 0, maxWidth: 'none' }}
+              />
             </div>
           </div>
 
