@@ -13,6 +13,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
 
 jobs:
   check-latest:
@@ -78,7 +79,7 @@ jobs:
         run: |
           wails build \
             -platform darwin/${{ matrix.arch }} \
-            -ldflags "-X main.Version=${{ github.ref_name }}" \
+            -ldflags "-X main.Version=${{ env.VERSION }}" \
             -o qoder2api
         env:
           CGO_ENABLED: 1
@@ -100,7 +101,7 @@ jobs:
             --icon "qoder2api.app" 200 190 \
             --hide-extension "qoder2api.app" \
             --app-drop-link 600 185 \
-            "Qoder2API-${{ github.ref_name }}-darwin-${{ matrix.arch }}.dmg" \
+            "Qoder2API-${{ env.VERSION }}-darwin-${{ matrix.arch }}.dmg" \
             "build/bin/qoder2api.app" || {
               echo "DMG creation failed, uploading app bundle only"
               exit 0
@@ -109,7 +110,7 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qoder2api-${{ github.ref_name }}-darwin-${{ matrix.arch }}-bin
+          name: qoder2api-${{ env.VERSION }}-darwin-${{ matrix.arch }}-bin
           path: |
             build/bin/qoder2api
             build/bin/qoder2api.app/
@@ -119,7 +120,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: hashFiles('Qoder2API-*.dmg') != ''
         with:
-          name: qoder2api-${{ github.ref_name }}-darwin-${{ matrix.arch }}-dmg
+          name: qoder2api-${{ env.VERSION }}-darwin-${{ matrix.arch }}-dmg
           path: Qoder2API-*.dmg
           retention-days: 30
 
@@ -162,7 +163,7 @@ jobs:
         run: |
           wails build \
             -platform linux/amd64 \
-            -ldflags "-X main.Version=${{ github.ref_name }}" \
+            -ldflags "-X main.Version=${{ env.VERSION }}" \
             -o qoder2api
         env:
           CGO_ENABLED: 1
@@ -175,14 +176,14 @@ jobs:
       - name: Create tarball
         run: |
           cd build/bin
-          tar -czf ../../qoder2api-${{ github.ref_name }}-linux-amd64.tar.gz qoder2api
+          tar -czf ../../qoder2api-${{ env.VERSION }}-linux-amd64.tar.gz qoder2api
           cd ../..
           ls -lh qoder2api-*.tar.gz
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qoder2api-${{ github.ref_name }}-linux-amd64
+          name: qoder2api-${{ env.VERSION }}-linux-amd64
           path: qoder2api-*.tar.gz
           retention-days: 30
 
@@ -210,11 +211,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ github.ref_name }}
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
           draft: true
           prerelease: false
           body: |
-            ## Qoder2API ${{ github.ref_name }}
+            ## Qoder2API ${{ env.VERSION }}
             
             ### Features
             - Multi-account management with PAT and OAuth authentication
@@ -225,9 +227,9 @@ jobs:
             - System tray integration
             
             ### Downloads
-            - **macOS (Intel)**: Qoder2API-${{ github.ref_name }}-darwin-amd64.dmg
-            - **macOS (Apple Silicon)**: Qoder2API-${{ github.ref_name }}-darwin-arm64.dmg
-            - **Linux (x64)**: qoder2api-${{ github.ref_name }}-linux-amd64.tar.gz
+            - **macOS (Intel)**: Qoder2API-${{ env.VERSION }}-darwin-amd64.dmg
+            - **macOS (Apple Silicon)**: Qoder2API-${{ env.VERSION }}-darwin-arm64.dmg
+            - **Linux (x64)**: qoder2api-${{ env.VERSION }}-linux-amd64.tar.gz
             
             ### Installation
             **macOS:**
@@ -237,7 +239,7 @@ jobs:
             
             **Linux:**
             ```bash
-            tar -xzf qoder2api-${{ github.ref_name }}-linux-amd64.tar.gz
+            tar -xzf qoder2api-${{ env.VERSION }}-linux-amd64.tar.gz
             ./qoder2api
             ```
           files: |
