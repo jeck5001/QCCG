@@ -107,8 +107,13 @@ func (b *bridge) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 		toolCallMerged := map[int]map[string]interface{}{}
 		contentBlockIndex := 0
 		streamContentLen := 0
+		var totalInputTokens, totalOutputTokens int
 
 		err = b.callQoder(ctx, "claude", messages, model, tools, func(d bridgeDelta) {
+			if d.InputTokens > 0 || d.OutputTokens > 0 {
+				totalInputTokens = d.InputTokens
+				totalOutputTokens = d.OutputTokens
+			}
 			if d.Content != "" {
 				streamContentLen += len(d.Content)
 				writeSse("content_block_delta", map[string]interface{}{
@@ -169,14 +174,19 @@ func (b *bridge) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 		writeSse("message_delta", map[string]interface{}{
 			"type":  "message_delta",
 			"delta": map[string]interface{}{"stop_reason": stopReason, "stop_sequence": nil},
-			"usage": map[string]interface{}{"output_tokens": 0},
+			"usage": map[string]interface{}{"input_tokens": totalInputTokens, "output_tokens": totalOutputTokens},
 		})
 		writeSse("message_stop", map[string]interface{}{"type": "message_stop"})
 		logger.Info("[Claude][%s] stream 完成 stop=%s content_len=%d tool_calls=%d 耗时=%dms", reqID, stopReason, streamContentLen, len(mergedTools), time.Since(startTime).Milliseconds())
 	} else {
 		var full strings.Builder
 		var toolCallBuf []interface{}
+		var totalInputTokens, totalOutputTokens int
 		err = b.callQoder(ctx, "claude", messages, model, tools, func(d bridgeDelta) {
+			if d.InputTokens > 0 || d.OutputTokens > 0 {
+				totalInputTokens = d.InputTokens
+				totalOutputTokens = d.OutputTokens
+			}
 			if d.Content != "" {
 				full.WriteString(d.Content)
 			}
@@ -225,12 +235,50 @@ func (b *bridge) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 			"id": msgId, "type": "message", "role": "assistant", "model": model,
 			"stop_reason": stopReason, "stop_sequence": nil,
 			"content": content,
-			"usage":   map[string]interface{}{"input_tokens": 0, "output_tokens": 0},
+			"usage":   map[string]interface{}{"input_tokens": totalInputTokens, "output_tokens": totalOutputTokens},
 		}
 		logger.Info("[Claude][%s] 完成 stop=%s content_len=%d tool_calls=%d 耗时=%dms", reqID, stopReason, full.Len(), len(toolCallBuf), time.Since(startTime).Milliseconds())
 		logger.Debug("[Claude][%s] 响应体: %s", reqID, func() string { d, _ := json.Marshal(resp); return string(d) }())
 		writeJSON(w, resp)
 	}
+}
+
+// handleListModels 实现 GET /v1/models，返回 Claude API 格式的模型列表。
+// Claude Code 通过此接口获取 context_window 大小，用于决定何时触发 compact（80% 阈值）。
+func (b *bridge) handleListModels(w http.ResponseWriter, r *http.Request) {
+	models, err := b.listAvailableModels()
+	if err != nil {
+		logger.Error("[models] listAvailableModels failed: %v, using fallback", err)
+		models = nil
+	}
+	const fallbackContextWindow = 180000
+	data := make([]interface{}, 0, len(models))
+	for _, m := range models {
+		ctxWin := m.MaxInputTokens
+		if ctxWin == 0 {
+			ctxWin = fallbackContextWindow
+		}
+		data = append(data, map[string]interface{}{
+			"type":           "model",
+			"id":             m.Key,
+			"display_name":   m.DisplayName,
+			"created_at":     "2024-01-01T00:00:00Z",
+			"context_window": ctxWin,
+		})
+	}
+	if len(data) == 0 {
+		// 兜底：返回 Qoder 已知的 assistant 模型列表
+		for _, key := range []string{"auto", "ultimate", "performance", "efficient", "lite"} {
+			data = append(data, map[string]interface{}{
+				"type":           "model",
+				"id":             key,
+				"display_name":   key,
+				"created_at":     "2024-01-01T00:00:00Z",
+				"context_window": fallbackContextWindow,
+			})
+		}
+	}
+	writeJSON(w, map[string]interface{}{"data": data})
 }
 
 func writeClaudeErr(w http.ResponseWriter, err error) {

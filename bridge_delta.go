@@ -7,13 +7,15 @@ import (
 )
 
 type bridgeDelta struct {
-	Role      string
-	Content   string
-	ToolCalls []interface{}
+	Role         string
+	Content      string
+	ToolCalls    []interface{}
+	InputTokens  int
+	OutputTokens int
 }
 
 func (d bridgeDelta) isEmpty() bool {
-	return d.Role == "" && d.Content == "" && d.ToolCalls == nil
+	return d.Role == "" && d.Content == "" && d.ToolCalls == nil && d.InputTokens == 0 && d.OutputTokens == 0
 }
 
 func extractDelta(dataLine string) bridgeDelta {
@@ -49,6 +51,14 @@ func extractDelta(dataLine string) bridgeDelta {
 			return bridgeDelta{Role: role, Content: content, ToolCalls: toolCalls}
 		}
 	}
+	// 上游最后一个 chunk 通常 choices 为空，但顶层携带 usage 统计
+	if usage, ok := innerJSON["usage"].(map[string]interface{}); ok {
+		in := int(floatVal(usage, "prompt_tokens"))
+		out := int(floatVal(usage, "completion_tokens"))
+		if in > 0 || out > 0 {
+			return bridgeDelta{InputTokens: in, OutputTokens: out}
+		}
+	}
 	logger.Debug("[delta] no valid choices found, inner=%s", inner)
 	return bridgeDelta{}
 }
@@ -66,4 +76,9 @@ func mapKeys(m map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func floatVal(m map[string]interface{}, key string) float64 {
+	v, _ := m[key].(float64)
+	return v
 }

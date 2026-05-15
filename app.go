@@ -224,6 +224,7 @@ func (a *App) startBridgeWithAccount(acct *account.Account) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/completions", b.handleChatCompletions)
 	mux.HandleFunc("/v1/messages", b.handleClaudeMessages)
+	mux.HandleFunc("/v1/models", b.handleListModels)
 	mux.HandleFunc("/v1/responses", b.handleCodexResponses)
 	logger.Info("Bridge: all endpoints registered")
 
