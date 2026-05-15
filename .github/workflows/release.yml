@@ -12,7 +12,29 @@ on:
         type: string
 
 jobs:
+  check-latest:
+    runs-on: ubuntu-latest
+    outputs:
+      is_latest: ${{ steps.check.outputs.is_latest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+      - name: Check if this tag is the latest
+        id: check
+        run: |
+          LATEST=$(git tag --sort=version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
+          echo "Latest tag: $LATEST, Current tag: ${{ github.ref_name }}"
+          if [ "$LATEST" = "${{ github.ref_name }}" ]; then
+            echo "is_latest=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_latest=false" >> $GITHUB_OUTPUT
+          fi
+
   build-macos:
+    needs: check-latest
+    if: needs.check-latest.outputs.is_latest == 'true'
     runs-on: macos-latest
     strategy:
       matrix:
@@ -95,6 +117,8 @@ jobs:
           retention-days: 30
 
   build-linux:
+    needs: check-latest
+    if: needs.check-latest.outputs.is_latest == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -156,7 +180,8 @@ jobs:
           retention-days: 30
 
   release:
-    needs: [build-macos, build-linux]
+    needs: [check-latest, build-macos, build-linux]
+    if: needs.check-latest.outputs.is_latest == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
