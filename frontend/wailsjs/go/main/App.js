@@ -42,6 +42,10 @@ export function GetLogs(arg1) {
   return window['go']['main']['App']['GetLogs'](arg1);
 }
 
+export function GetLogsSince(arg1, arg2) {
+  return window['go']['main']['App']['GetLogsSince'](arg1, arg2);
+}
+
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }

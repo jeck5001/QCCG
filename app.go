@@ -288,6 +288,10 @@ func (a *App) GetLogs(limit int) []logger.Entry {
 	return logger.GetLogs(limit)
 }
 
+func (a *App) GetLogsSince(afterSeq, limit int) logger.LogPage {
+	return logger.GetLogsSince(afterSeq, limit)
+}
+
 func (a *App) ReorderAccounts(ids []string) error {
 	return account.Reorder(ids)
 }

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { GetLogsSince, ClearLogs } from '../../wailsjs/go/main/App'
 
 interface LogEntry {
+  seq: number
   time: string
   level: string
   message: string
@@ -10,39 +12,42 @@ export default function LogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [filter, setFilter] = useState<string>('all')
+  const lastSeqRef = useRef(0)
+  const MAX_DISPLAY = 500
 
-  const fetchLogs = async () => {
+  const fetchIncremental = async (reset = false) => {
     try {
-      console.log('[LogsPage] Fetching logs...')
-      const entries = await (window as any).go?.main?.App?.GetLogs(200)
-      console.log('[LogsPage] Got entries:', entries)
-      if (entries) {
-        setLogs(entries)
-      } else {
-        console.log('[LogsPage] No entries returned')
-      }
+      const afterSeq = reset ? 0 : lastSeqRef.current
+      const page = await GetLogsSince(afterSeq, reset ? 200 : 100)
+      if (!page?.entries?.length) return
+      lastSeqRef.current = page.last_seq
+      setLogs(prev => {
+        const next = reset ? page.entries : [...prev, ...page.entries]
+        return next.length > MAX_DISPLAY ? next.slice(next.length - MAX_DISPLAY) : next
+      })
     } catch (e) {
-      console.error('[LogsPage] Failed to fetch logs:', e)
+      console.error('[LogsPage] fetch failed:', e)
     }
   }
 
   useEffect(() => {
-    fetchLogs()
-    if (autoRefresh) {
-      const interval = setInterval(fetchLogs, 2000)
-      return () => clearInterval(interval)
-    }
+    lastSeqRef.current = 0
+    fetchIncremental(true)
+  }, [])
+
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(() => fetchIncremental(false), 2000)
+    return () => clearInterval(id)
   }, [autoRefresh])
 
   const handleClear = async () => {
-    await (window as any).go?.main?.App?.ClearLogs()
+    await ClearLogs()
+    lastSeqRef.current = 0
     setLogs([])
   }
 
-  const filteredLogs = logs.filter(log => {
-    if (filter === 'all') return true
-    return log.level === filter
-  })
+  const filteredLogs = filter === 'all' ? logs : logs.filter(l => l.level === filter)
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -72,7 +77,7 @@ export default function LogsPage() {
             />
             <span>自动刷新</span>
           </label>
-          <button onClick={fetchLogs} className="btn btn-secondary">刷新</button>
+          <button onClick={() => fetchIncremental(false)} className="btn btn-secondary">刷新</button>
           <button onClick={handleClear} className="btn btn-danger">清空</button>
         </div>
       </div>
@@ -81,8 +86,8 @@ export default function LogsPage() {
         {filteredLogs.length === 0 ? (
           <div className="logs-empty">暂无日志</div>
         ) : (
-          filteredLogs.map((log, i) => (
-            <div key={i} className="log-entry">
+          filteredLogs.map(log => (
+            <div key={log.seq} className="log-entry">
               <span className="log-time">{new Date(log.time).toLocaleTimeString()}</span>
               <span className="log-level" style={{ color: getLevelColor(log.level) }}>
                 [{log.level.toUpperCase()}]

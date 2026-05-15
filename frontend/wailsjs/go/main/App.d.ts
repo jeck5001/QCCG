@@ -24,6 +24,8 @@ export function GetClientConfigs():Promise<Array<main.ClientConfig>>;
 
 export function GetLogs(arg1:number):Promise<Array<logger.Entry>>;
 
+export function GetLogsSince(arg1:number,arg2:number):Promise<logger.LogPage>;
+
 export function GetSettings():Promise<account.Settings>;
 
 export function GetStatus():Promise<account.Status>;

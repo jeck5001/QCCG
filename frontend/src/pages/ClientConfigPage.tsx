@@ -27,29 +27,17 @@ const ICON_BY_TYPE: Record<string, string> = {
   gemini: geminiIcon,
 }
 
-// 默认映射「一键填充」内容，与后端 bridge.go::defaultModelMapping 对齐。
-// 按 agent 分组，避免把 gpt 关键字塞进 claude 桶。
 const DEFAULT_MAPPING_BY_AGENT: Record<string, Array<[string, string]>> = {
   claude: [['opus', 'ultimate'], ['sonnet', 'performance'], ['haiku', 'lite']],
   codex: [['gpt', 'performance']],
   gemini: [['gemini', 'performance']],
 }
 
-  // 客户端模型名候选，按 agent 提供建议
 const CLIENT_MODEL_OPTIONS_BY_AGENT: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-3-5-sonnet-latest', 'claude-3-5-haiku-20241022'],
   codex: ['gpt', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-codex', 'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini', 'o1', 'o1-mini'],
   gemini: ['gemini', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-pro-latest', 'gemini-1.5-flash-latest'],
 }
-
-// ============== 配置文件文本工具 ==============
-// 模型映射本质是 bridge 内部转换层，不应写入 CLI 配置文件本身。
-// 但为了让用户在编辑器中直观看到映射变化：
-//   - claude (JSON): 直接修改 env.ANTHROPIC_DEFAULT_OPUS/SONNET/HAIKU_MODEL 三个槽位
-//   - codex/gemini: 追加注释行展示映射
-// 保存到磁盘前会自动剥离注入内容，确保 CLI 文件保持干净。
-// 注意：用户点击"保存"后，这三个槽位的值会真实写入磁盘（不剥离），
-// 因为它们本来就是 Claude Code 读取的合法字段。
 
 // claude JSON 中三个模型槽位字段与映射 from-key 的对应关系
 const CLAUDE_MODEL_SLOTS: Array<{ envKey: string; fromKey: string }> = [
@@ -61,6 +49,7 @@ const CLAUDE_MODEL_SLOTS: Array<{ envKey: string; fromKey: string }> = [
 const PREVIEW_MAPPING_KEY = '_qoder2api_model_mapping'
 const QODER_API_KEY = 'qoder2api'
 
+// ============== MappingSelect ==============
 interface MappingSelectProps {
   value: string
   onChange: (v: string) => void
@@ -107,7 +96,8 @@ function MappingSelect({ value, onChange, options, placeholder = '请选择…' 
   )
 }
 
-// 把 qoder2api 所需字段注入到配置文件内容（纯前端，不落盘）
+// ============== 配置文件文本工具 ==============
+
 function applyConfigToContent(content: string, format: string, agentType: string, port: number, apiKey: string): string {
   const baseURL = `http://127.0.0.1:${port}`
   if (format === 'json') {
@@ -141,7 +131,6 @@ function applyConfigToContent(content: string, format: string, agentType: string
   return content
 }
 
-// 从配置文件内容中移除 qoder2api 注入的字段（纯前端，不落盘）
 function removeConfigFromContent(content: string, format: string, agentType: string): string {
   if (format === 'json') {
     try {
@@ -160,9 +149,7 @@ function removeConfigFromContent(content: string, format: string, agentType: str
     } catch { return content }
   }
   if (format === 'toml') {
-    return content.split('\n').filter(l =>
-      !l.startsWith('model_provider')
-    ).join('\n') + '\n'
+    return content.split('\n').filter(l => !l.startsWith('model_provider')).join('\n') + '\n'
   }
   if (format === 'dotenv') {
     return content.split('\n').filter(l =>
@@ -172,7 +159,6 @@ function removeConfigFromContent(content: string, format: string, agentType: str
   return content
 }
 
-// qoder2API 修改的字段优先排在顶部，其余字段按字母序跟随
 const TOP_LEVEL_KEY_ORDER = ['env', 'enabledPlugins', 'permissions', 'model', 'extensions', 'hooks']
 const ENV_KEY_ORDER = [
   'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN',
@@ -189,7 +175,6 @@ function sortJSONKeys(obj: unknown): unknown {
       const rest = keys.filter(k => !priorityList.includes(k)).sort()
       return [...priority, ...rest]
     }
-    // 顶层用 TOP_LEVEL_KEY_ORDER，env 子对象用 ENV_KEY_ORDER
     const isEnvObj = Object.keys(o).some(k => ENV_KEY_ORDER.includes(k))
     const ordered = sortWithPriority(Object.keys(o), isEnvObj ? ENV_KEY_ORDER : TOP_LEVEL_KEY_ORDER)
     const result: Record<string, unknown> = {}
@@ -199,7 +184,6 @@ function sortJSONKeys(obj: unknown): unknown {
   return obj
 }
 
-// 仅 JSON 支持"整理格式"。TOML / dotenv 含注释，parse-stringify 会丢失语义，参考 cc-switch 同样禁用。
 function formatContent(content: string, format: string): string {
   if (format !== 'json') throw new Error(`${format} 不支持自动整理（会丢失注释）`)
   const trimmed = content.trim()
@@ -211,8 +195,6 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// 从预览文本中剥离 qoder2api 注入的映射展示字段，得到"干净"的 CLI 文件原文
-// claude JSON: 三个 DEFAULT_*_MODEL 槽位是合法字段，不剥离（用户保存即真实写入）
 function stripMappingPreview(content: string, format: string): string {
   if (!content) return content
   if (format === 'json') {
@@ -222,13 +204,10 @@ function stripMappingPreview(content: string, format: string): string {
         delete obj[PREVIEW_MAPPING_KEY]
         return JSON.stringify(obj, null, 2) + '\n'
       }
-    } catch {
-      // 文本不是合法 JSON（用户正在编辑），保持原样
-    }
+    } catch {}
     return content
   }
   if (format === 'toml') {
-    // 移除 [_qoder2api_model_mapping] 段（含其后续 KV 行，直到下一段或文件结束）
     const re = new RegExp(`(?:^|\\n)\\[${escapeRe(PREVIEW_MAPPING_KEY)}\\][^\\n]*(?:\\n(?!\\[)[^\\n]*)*`, 'g')
     return content.replace(re, '').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') + '\n'
   }
@@ -239,12 +218,9 @@ function stripMappingPreview(content: string, format: string): string {
   return content
 }
 
-// 把当前 agent 的映射注入到预览文本（先 strip 旧的，再插入新的，保证幂等）
-// claude JSON: 把映射结果直接写入 env 中三个 DEFAULT_*_MODEL 槽位（合法字段，保存时不剥离）
 function patchMappingPreview(content: string, format: string, mapping: Record<string, string> | undefined, agent?: string): string {
   const cleaned = stripMappingPreview(content, format)
   if (format === 'json' && agent === 'claude') {
-    // 无论 mapping 是否为空，都先清槽位再按需写入，保证删行后槽位消失
     try {
       const obj = cleaned.trim() ? JSON.parse(cleaned) : {}
       if (obj['env'] && typeof obj['env'] === 'object') {
@@ -261,9 +237,7 @@ function patchMappingPreview(content: string, format: string, mapping: Record<st
         }
       }
       return JSON.stringify(obj, null, 2) + '\n'
-    } catch {
-      return content
-    }
+    } catch { return content }
   }
   if (!mapping || Object.keys(mapping).length === 0) return cleaned
   if (format === 'json') {
@@ -271,10 +245,7 @@ function patchMappingPreview(content: string, format: string, mapping: Record<st
       const obj = cleaned.trim() ? JSON.parse(cleaned) : {}
       obj[PREVIEW_MAPPING_KEY] = mapping
       return JSON.stringify(obj, null, 2) + '\n'
-    } catch {
-      // 用户正在编辑、JSON 暂时损坏 → 不强行注入
-      return content
-    }
+    } catch { return content }
   }
   if (format === 'toml') {
     const head = cleaned.replace(/\s+$/, '')
@@ -293,13 +264,18 @@ function patchMappingPreview(content: string, format: string, mapping: Record<st
   return cleaned
 }
 
+// ============== ClientConfigPage ==============
+
 export default function ClientConfigPage() {
   const [configs, setConfigs] = useState<ClientConfig[]>([])
   const [qoderModels, setQoderModels] = useState<main.QoderModel[]>([])
   const [loading, setLoading] = useState(true)
-  const [applying, _setApplying] = useState<string | null>(null)
   const [status, setStatus] = useState<{ running: boolean; port: number }>({ running: false, port: 8963 })
   const [activeType, setActiveType] = useState<string>('claude')
+
+  // 从 Settings 拉取的数据，统一在父组件管理，避免子组件重复 IPC
+  const [savedMappings, setSavedMappings] = useState<Record<string, Record<string, string>>>({})
+  const [bridgeToken, setBridgeToken] = useState(QODER_API_KEY)
 
   // 配置文件编辑器
   const [fileLoading, setFileLoading] = useState(false)
@@ -312,28 +288,29 @@ export default function ClientConfigPage() {
   const [hasBackup, setHasBackup] = useState(false)
   const editorRef = useRef<ConfigEditorHandle>(null)
 
-  // 客户端模型名 → Qoder model.key 的待保存映射（按 agent 暂存到内存，仅在用户点击"保存"时写后端）
   const [pendingMapping, setPendingMapping] = useState<Record<string, Record<string, string>> | null>(null)
   const [mappingDirty, setMappingDirty] = useState(false)
 
-  const refresh = async () => {
-    try {
-      const [c, m, s] = await Promise.all([
-        GetClientConfigs(),
-        ListQoderModels().catch(() => [] as main.QoderModel[]),
-        GetStatus().catch(() => ({ running: false, port: 8963 })),
-      ])
+  // 初始加载：并行拉取所有数据，ListQoderModels 只调用一次
+  useEffect(() => {
+    Promise.all([
+      GetClientConfigs(),
+      ListQoderModels().catch(() => [] as main.QoderModel[]),
+      GetStatus().catch(() => ({ running: false, port: 8963 })),
+      GetSettings().catch(() => null),
+    ]).then(([c, m, s, settings]) => {
       setConfigs(c || [])
       setQoderModels(m || [])
       if (s) setStatus(s as any)
-    } catch (err) {
+      if (settings) {
+        const mappings = (settings.model_mappings || {}) as Record<string, Record<string, string>>
+        setSavedMappings(mappings)
+        setBridgeToken(settings.bridge_token || QODER_API_KEY)
+      }
+    }).catch(err => {
       console.error('Failed to load configs:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const [fileLoadKey, setFileLoadKey] = useState(0)
+    }).finally(() => setLoading(false))
+  }, [])
 
   const loadFile = useCallback(async (type: string) => {
     setFileLoading(true)
@@ -343,7 +320,6 @@ export default function ClientConfigPage() {
       const r = await ReadClientConfigFile(type)
       setFileContent(r?.content || '')
       setFileMeta({ path: r?.path || '', format: r?.format || '', existed: !!r?.existed })
-      setFileLoadKey(k => k + 1)
       setHasBackup(await HasClientConfigBackup(type))
     } catch (err: any) {
       setFileError(String(err?.message || err))
@@ -354,106 +330,70 @@ export default function ClientConfigPage() {
     }
   }, [])
 
-  useEffect(() => {
-    refresh()
-  }, [])
-
-  // 切 Tab 时同步加载该 client 的主配置文件原文
+  // 切 Tab 时加载配置文件
   useEffect(() => {
     if (activeType) loadFile(activeType)
   }, [activeType, loadFile])
 
-  // 文件 + format 就绪后，从 Settings 拉一次当前 agent 的映射，silent 注入到预览
-  // 为什么不在 ModelMappingSection 内做：子组件 GetSettings 与父组件 loadFile 是异步并行的，
-  // 当 GetSettings 比 loadFile 先 resolve 时，子组件 patch 时 fileMeta 还为 null，直接 early return，
-  // 之后 fileContent 被 loadFile 覆盖、注入丢失。父组件等 fileMeta 就绪后再 patch，时序确定。
+  // 文件就绪后注入映射预览
   useEffect(() => {
     if (!fileMeta?.format || !activeType) return
-    let cancelled = false
-    GetSettings().then(s => {
-      if (cancelled) return
-      const all = ((s?.model_mappings || {}) as Record<string, Record<string, string>>)
-      let bucket: Record<string, string> | undefined = all[activeType]
-      if (!bucket && activeType === 'claude' && s?.model_mapping && Object.keys(s.model_mapping).length > 0) {
-        bucket = s.model_mapping
-      }
-      const fmt = fileMeta.format
-      setFileContent(prev => patchMappingPreview(prev, fmt, bucket || {}, activeType))
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [fileMeta?.format, activeType, fileLoadKey])
+    const bucket = savedMappings[activeType]
+    setFileContent(prev => patchMappingPreview(prev, fileMeta.format, bucket || {}, activeType))
+  }, [fileMeta?.path, activeType])
 
   const activeCfg = useMemo(
     () => configs.find(c => c.type === activeType),
     [configs, activeType]
   )
 
-  // 一键配置：纯前端操作，只更新编辑器内容，不落盘。用户需手动点"保存"才写磁盘。
-  // 注入 base_url/auth 后，优先用内存中未保存的 pendingMapping，否则从 Settings 读取已保存映射。
   const handleApply = async (cfg: ClientConfig) => {
     if (!fileMeta?.format) return
-    const fmt = fileMeta.format
-    let apiKey = QODER_API_KEY
-    let bucket: Record<string, string> | undefined = pendingMapping?.[cfg.type]
-    try {
-      const s = await GetSettings()
-      apiKey = s?.bridge_token || QODER_API_KEY
-      if (!bucket) {
-        const all = ((s?.model_mappings || {}) as Record<string, Record<string, string>>)
-        bucket = all[cfg.type]
-        if (!bucket && cfg.type === 'claude' && s?.model_mapping && Object.keys(s.model_mapping).length > 0) {
-          bucket = s.model_mapping
-        }
-      }
-    } catch { /* 拉取失败则使用默认值 */ }
-    let applied = applyConfigToContent(fileContent, fmt, cfg.type, status.port, apiKey)
-    applied = patchMappingPreview(applied, fmt, bucket || {}, cfg.type)
+    const bucket = pendingMapping?.[cfg.type] ?? savedMappings[cfg.type]
+    let applied = applyConfigToContent(fileContent, fileMeta.format, cfg.type, status.port, bridgeToken)
+    applied = patchMappingPreview(applied, fileMeta.format, bucket || {}, cfg.type)
     setFileContent(applied)
     setFileDirty(true)
   }
 
-  // 移除配置：同上，只更新编辑器内容，不落盘。
   const handleRemove = (cfg: ClientConfig) => {
     if (!fileMeta?.format) return
-    const next = removeConfigFromContent(fileContent, fileMeta.format, cfg.type)
-    setFileContent(next)
+    setFileContent(removeConfigFromContent(fileContent, fileMeta.format, cfg.type))
     setFileDirty(true)
   }
 
-  // 还原：从备份恢复到上次保存前的状态，直接落盘后重新加载，不需要再点保存
   const handleRestore = async () => {
     if (!activeType) return
     try {
       await RestoreClientConfigFile(activeType)
       setFileDirty(false)
       setMappingDirty(false)
-      await refresh()
+      // 还原后只需重新加载文件和 configs（不需要重拉模型列表）
+      const [c, s] = await Promise.all([GetClientConfigs(), GetStatus().catch(() => null)])
+      setConfigs(c || [])
+      if (s) setStatus(s as any)
       await loadFile(activeType)
     } catch (err: any) {
       setFileError(String(err?.message || err))
     }
   }
 
-  // 重新加载：丢弃未保存的编辑，从磁盘重新读取
   const handleReload = () => {
     setFileDirty(false)
     setMappingDirty(false)
     loadFile(activeType)
   }
 
-  // 统一保存：同时写 CLI 配置文件 + 持久化模型映射到 Settings.json
   const handleSaveFile = async () => {
     if (!activeType) return
     setFileSaving(true)
     setFileError(null)
     try {
-      // 1. 写文件（仅当文件有改动时）— 落盘前剥离 qoder2api 旧式预览字段（claude 的三个槽位是合法字段，不剥离）
       if (fileDirty) {
         const cleaned = stripMappingPreview(fileContent, fileMeta?.format || '')
         await SaveClientConfigFile(activeType, cleaned)
         setFileDirty(false)
       }
-      // 2. 写 Settings.ModelMappings（仅当映射有改动时）
       if (mappingDirty && pendingMapping) {
         const cur = await GetSettings()
         const merged = new account.Settings({
@@ -462,10 +402,15 @@ export default function ClientConfigPage() {
           model_mappings: pendingMapping,
         } as any)
         await SaveSettings(merged)
+        setSavedMappings(pendingMapping)
+        setBridgeToken(cur?.bridge_token || QODER_API_KEY)
         setMappingDirty(false)
       }
-      await refresh()
-      await loadFile(activeType) // loadFile 内部会更新 hasBackup
+      // 只刷新 configs（applied 状态），不重拉模型列表
+      const [c, s] = await Promise.all([GetClientConfigs(), GetStatus().catch(() => null)])
+      setConfigs(c || [])
+      if (s) setStatus(s as any)
+      await loadFile(activeType)
     } catch (err: any) {
       setFileError(String(err?.message || err))
     } finally {
@@ -491,7 +436,6 @@ export default function ClientConfigPage() {
     }
   }
 
-  // 子组件 ModelMappingSection 在用户编辑/默认填充时调用：把当前 agent 的映射 patch 到预览（标 dirty）
   const handleMappingPatchPreview = useCallback((agentBucket: Record<string, string>) => {
     if (!fileMeta?.format) return
     const fmt = fileMeta.format
@@ -510,7 +454,6 @@ export default function ClientConfigPage() {
         <h2>Agent 配置</h2>
       </div>
 
-      {/* 横向 Tab 栏（紧贴页头之下，对齐 Sidebar 风格） */}
       <div className="client-tabs" role="tablist">
         {configs.map(cfg => {
           const iconSrc = ICON_BY_TYPE[cfg.type]
@@ -531,7 +474,6 @@ export default function ClientConfigPage() {
         })}
       </div>
 
-      {/* 当前 Tab 配置卡片 */}
       {activeCfg && (
         <div className={`config-card ${activeCfg.applied ? 'applied' : ''}`}>
           <div className="config-card-header">
@@ -553,19 +495,17 @@ export default function ClientConfigPage() {
               </div>
             )}
 
-            {/* 模型映射（按 agent 分组），改动暂存，"保存"按钮统一落盘 */}
             <ModelMappingSection
               agent={activeCfg.type}
               qoderModels={qoderModels}
+              initialMappings={savedMappings}
               onMappingChange={(allMappings) => { setPendingMapping(allMappings); setMappingDirty(true) }}
               onMappingClean={() => setMappingDirty(false)}
               onPatchPreview={handleMappingPatchPreview}
             />
 
-            {/* 配置文件编辑器（同卡片内分段） */}
             <div className="config-section-divider">
               <span className="section-title">📝 配置文件</span>
-
               <code className="section-path">{activeCfg.config_path}</code>
               <span className="meta" style={!fileDirty && fileMeta?.existed ? { color: 'var(--bs-success, #198754)' } : undefined}>
                 {fileMeta && !fileMeta.existed && '· 文件不存在'}
@@ -580,17 +520,12 @@ export default function ClientConfigPage() {
                   disabled={fileLoading || !fileContent.trim() || formatStatus !== 'idle'}
                   title="格式化（仅 JSON）"
                 >
-                  <WandIcon
-                    key={formatStatus}
-                    size={18}
-                    className={formatStatus === 'done' ? 'wand-icon-animate' : ''}
-                  />
+                  <WandIcon key={formatStatus} size={18} className={formatStatus === 'done' ? 'wand-icon-animate' : ''} />
                 </button>
               )}
               <button
                 className="icon-btn icon-btn-apply"
                 onClick={() => handleApply(activeCfg)}
-                disabled={applying === activeCfg.type}
                 title={activeCfg.applied ? '更新配置' : '一键配置'}
               ><Rocket size={18} /></button>
               <button
@@ -619,34 +554,23 @@ export default function ClientConfigPage() {
               </div>
             )}
             <div style={{ marginTop: 10 }}>
-            <ConfigEditor
-              ref={editorRef}
-              value={fileContent}
-              onChange={v => { setFileContent(v); setFileDirty(true) }}
-              format={fileMeta?.format as 'json' | 'toml' | 'dotenv' | undefined}
-              placeholderText={fileLoading ? '加载中…' : '配置文件内容…'}
-              minLines={16}
-            />
+              <ConfigEditor
+                ref={editorRef}
+                value={fileContent}
+                onChange={v => { setFileContent(v); setFileDirty(true) }}
+                format={fileMeta?.format as 'json' | 'toml' | 'dotenv' | undefined}
+                placeholderText={fileLoading ? '加载中…' : '配置文件内容…'}
+                minLines={16}
+              />
             </div>
-
           </div>
         </div>
       )}
-
     </div>
   )
 }
 
 // ============== ModelMappingSection ==============
-// 仅本 agent 的模型映射卡片（嵌入 ClientConfigPage 的 config-card-body 中）
-//
-// 数据形态：Settings.ModelMappings = { claude: {sonnet: performance, ...}, codex: {...}, gemini: {...} }
-// 兼容老数据：Settings.ModelMapping (扁平 map) 仅当 ModelMappings[claude] 不存在时迁移到 claude 桶。
-//
-// 行为：
-//   - 改动行 → 调用 onMappingChange(allMappings) 通知父组件 dirty + 完整映射快照
-//   - 不直接调用 SaveSettings；落盘由父组件的"保存"按钮统一处理（同时保存 CLI 配置文件 + Settings）
-//   - 模型映射是 bridge 内部转换层，不写入 CLI 配置文件本体
 
 type Row = { id: number; from: string; to: string }
 let _rid = 1
@@ -655,43 +579,32 @@ const newRid = () => _rid++
 interface MappingProps {
   agent: string
   qoderModels: main.QoderModel[]
+  initialMappings: Record<string, Record<string, string>>
   onMappingChange: (allMappings: Record<string, Record<string, string>>) => void
   onMappingClean: () => void
   onPatchPreview: (agentBucket: Record<string, string>) => void
 }
 
-function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingClean, onPatchPreview }: MappingProps) {
-  const [allMappings, setAllMappings] = useState<Record<string, Record<string, string>>>({})
+function ModelMappingSection({ agent, qoderModels, initialMappings, onMappingChange, onMappingClean, onPatchPreview }: MappingProps) {
   const [rows, setRows] = useState<Row[]>([])
-  const [error, setError] = useState<string | null>(null)
   const [touched, setTouched] = useState(false)
 
-  // 加载 / agent 切换时重新构造 rows（仅维护本组件状态；预览注入由父组件统一处理，避免竞态）
+  // agent 切换或 initialMappings 更新时重建 rows（无 IPC）
   useEffect(() => {
-    let cancelled = false
-    GetSettings().then(s => {
-      if (cancelled) return
-      const mappings = ((s?.model_mappings || {}) as Record<string, Record<string, string>>)
-      let bucket: Record<string, string> | undefined = mappings[agent]
-      if (!bucket && agent === 'claude' && s?.model_mapping && Object.keys(s.model_mapping).length > 0) {
-        bucket = s.model_mapping
-      }
-      const list = bucket ? Object.entries(bucket).map(([from, to]) => ({ id: newRid(), from, to })) : []
-      setAllMappings(mappings)
-      setRows(list)
-      setError(null)
-      setTouched(false)
-      // 初始化时也通知父组件当前映射快照，确保 pendingMapping 始终反映最新状态
-      const merged = { ...mappings }
-      if (bucket && Object.keys(bucket).length > 0) merged[agent] = bucket
-      else delete merged[agent]
-      onMappingChange(merged)
-      onMappingClean()
-    }).catch(err => setError(String(err?.message || err)))
-    return () => { cancelled = true }
-  }, [agent])
+    let bucket = initialMappings[agent]
+    if (!bucket && agent === 'claude') {
+      // 兼容旧扁平映射（已在父组件加载时处理，这里不再重复拉取）
+    }
+    const list = bucket ? Object.entries(bucket).map(([from, to]) => ({ id: newRid(), from, to })) : []
+    setRows(list)
+    setTouched(false)
+    const merged = { ...initialMappings }
+    if (bucket && Object.keys(bucket).length > 0) merged[agent] = bucket
+    else delete merged[agent]
+    onMappingChange(merged)
+    onMappingClean()
+  }, [agent, initialMappings])
 
-  // rows 变化 → 重组 allMappings 并通知父
   useEffect(() => {
     if (!touched) return
     const next: Record<string, string> = {}
@@ -699,28 +612,26 @@ function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingCle
       const k = r.from.trim(), v = r.to.trim()
       if (k && v) next[k] = v
     }
-    const merged = { ...allMappings }
+    const merged = { ...initialMappings }
     if (Object.keys(next).length === 0) delete merged[agent]
     else merged[agent] = next
     onMappingChange(merged)
-    // 同步 patch 到配置文件预览（仅展示，保存时会被 strip）
     onPatchPreview(next)
   }, [rows, touched])
 
   const candidates = CLIENT_MODEL_OPTIONS_BY_AGENT[agent] || []
-
   const markTouched = () => { if (!touched) setTouched(true) }
-  const addRow = () => { setRows([...rows, { id: newRid(), from: '', to: '' }]); markTouched() }
+  const addRow = () => { setRows(prev => [...prev, { id: newRid(), from: '', to: '' }]); markTouched() }
   const updateRow = (id: number, key: 'from' | 'to', v: string) => {
-    setRows(rows.map(r => r.id === id ? { ...r, [key]: v } : r)); markTouched()
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [key]: v } : r)); markTouched()
   }
-  const removeRow = (id: number) => { setRows(rows.filter(r => r.id !== id)); markTouched() }
+  const removeRow = (id: number) => { setRows(prev => prev.filter(r => r.id !== id)); markTouched() }
   const fillDefaults = () => {
     const existing = new Set(rows.map(r => r.from.trim()))
     const adds = (DEFAULT_MAPPING_BY_AGENT[agent] || [])
       .filter(([from]) => !existing.has(from))
       .map(([from, to]) => ({ id: newRid(), from, to }))
-    if (adds.length > 0) { setRows([...rows, ...adds]); markTouched() }
+    if (adds.length > 0) { setRows(prev => [...prev, ...adds]); markTouched() }
   }
 
   return (
@@ -732,13 +643,6 @@ function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingCle
         <button className="btn btn-secondary btn-sm" onClick={fillDefaults} title="按家族关键字一键填充默认条目">默认</button>
         <button className="btn btn-secondary btn-sm" onClick={addRow}>+ 加一行</button>
       </div>
-
-      {error && (
-        <div className="config-warning">
-          <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>{error}</span>
-        </div>
-      )}
 
       {rows.length === 0 ? (
         <div className="mapping-empty">未配置自定义映射，将使用内置默认表（{(DEFAULT_MAPPING_BY_AGENT[agent] || []).map(([f, t]) => `${f}→${t}`).join(' / ') || '无'}）</div>
@@ -756,22 +660,17 @@ function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingCle
                 <line x1="5" y1="12" x2="19" y2="12"/>
                 <polyline points="12 5 19 12 12 19"/>
               </svg>
-              {qoderModels.length > 0 ? (
-                <MappingSelect
-                  value={r.to}
-                  onChange={v => updateRow(r.id, 'to', v)}
-                  options={[
-                    ...qoderModels.map(m => ({ value: m.key, label: `${m.display_name} (${m.key})${m.is_default ? ' · 默认' : ''}` })),
-                    ...(r.to && !qoderModels.some(m => m.key === r.to) ? [{ value: r.to, label: `${r.to}（自定义/已下线）` }] : [])
-                  ]}
-                />
-              ) : (
-                <MappingSelect
-                  value={r.to}
-                  onChange={v => updateRow(r.id, 'to', v)}
-                  options={FALLBACK_QODER_KEYS.map(k => ({ value: k, label: k }))}
-                />
-              )}
+              <MappingSelect
+                value={r.to}
+                onChange={v => updateRow(r.id, 'to', v)}
+                options={qoderModels.length > 0
+                  ? [
+                      ...qoderModels.map(m => ({ value: m.key, label: `${m.display_name} (${m.key})${m.is_default ? ' · 默认' : ''}` })),
+                      ...(r.to && !qoderModels.some(m => m.key === r.to) ? [{ value: r.to, label: `${r.to}（自定义/已下线）` }] : [])
+                    ]
+                  : FALLBACK_QODER_KEYS.map(k => ({ value: k, label: k }))
+                }
+              />
               <button className="mapping-delete-btn" onClick={() => removeRow(r.id)} title="删除此行" aria-label="删除">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" width="13" height="13">
                   <line x1="18" y1="6" x2="6" y2="18"/>

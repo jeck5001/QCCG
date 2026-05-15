@@ -20,23 +20,30 @@ const (
 )
 
 type Entry struct {
+	Seq     int       `json:"seq"`
 	Time    time.Time `json:"time"`
 	Level   Level     `json:"level"`
 	Message string    `json:"message"`
 }
 
+type LogPage struct {
+	Entries []Entry `json:"entries"`
+	LastSeq int     `json:"last_seq"`
+}
+
 var (
 	mu           sync.RWMutex
 	entries      []Entry
-	maxEntries   = 2000 // 内存中保留的日志条数；前端 LogsPage 直接读这里
+	nextSeq      = 1
+	maxEntries   = 2000
 	currentLevel = LevelInfo
 
 	// 文件 sink 状态
-	fileMu      sync.Mutex
-	fileDir     string    // 日志目录，空表示未启用文件 sink
-	fileHandle  *os.File  // 当天日志句柄
-	fileDate    string    // 当前打开文件对应的 YYYYMMDD，跨日时关闭并新建
-	retainDays  = 7       // 保留最近 N 天的归档（明文 + .gz 一起算）
+	fileMu     sync.Mutex
+	fileDir    string   // 日志目录，空表示未启用文件 sink
+	fileHandle *os.File // 当天日志句柄
+	fileDate   string   // 当前打开文件对应的 YYYYMMDD，跨日时关闭并新建
+	retainDays = 7      // 保留最近 N 天的归档（明文 + .gz 一起算）
 )
 
 // InitFile 启动文件 sink。
@@ -198,6 +205,7 @@ func log(level Level, format string, args ...interface{}) {
 		return
 	}
 	entry := Entry{
+		Seq:     0, // 在锁内赋值
 		Time:    time.Now(),
 		Level:   level,
 		Message: fmt.Sprintf(format, args...),
@@ -205,6 +213,8 @@ func log(level Level, format string, args ...interface{}) {
 
 	// sink 1: 内存环
 	mu.Lock()
+	entry.Seq = nextSeq
+	nextSeq++
 	entries = append(entries, entry)
 	if len(entries) > maxEntries {
 		entries = entries[len(entries)-maxEntries:]
@@ -227,6 +237,7 @@ func Debug(format string, args ...interface{}) { log(LevelDebug, format, args...
 func Info(format string, args ...interface{})  { log(LevelInfo, format, args...) }
 func Error(format string, args ...interface{}) { log(LevelError, format, args...) }
 
+// GetLogs 返回最近 limit 条日志（limit<=0 返回全部）。
 func GetLogs(limit int) []Entry {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -234,12 +245,35 @@ func GetLogs(limit int) []Entry {
 		limit = len(entries)
 	}
 	start := len(entries) - limit
-	if start < 0 {
-		start = 0
-	}
 	result := make([]Entry, limit)
 	copy(result, entries[start:])
 	return result
+}
+
+// GetLogsSince 返回 seq > afterSeq 的增量条目及当前最大 seq。
+// afterSeq=0 等价于全量拉取（最多 limit 条）。
+func GetLogsSince(afterSeq, limit int) LogPage {
+	mu.RLock()
+	defer mu.RUnlock()
+	var result []Entry
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Seq <= afterSeq {
+			break
+		}
+		result = append(result, entries[i])
+	}
+	// 反转为正序
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	last := 0
+	if len(entries) > 0 {
+		last = entries[len(entries)-1].Seq
+	}
+	return LogPage{Entries: result, LastSeq: last}
 }
 
 // LogDir 返回当前生效的日志目录（前端「打开日志文件夹」用）。空字符串表示文件 sink 未启用。
