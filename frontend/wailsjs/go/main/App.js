@@ -10,6 +10,10 @@ export function ApplyClientConfig(arg1, arg2) {
   return window['go']['main']['App']['ApplyClientConfig'](arg1, arg2);
 }
 
+export function BackupClientConfigFile(arg1) {
+  return window['go']['main']['App']['BackupClientConfigFile'](arg1);
+}
+
 export function CancelOAuthLogin(arg1) {
   return window['go']['main']['App']['CancelOAuthLogin'](arg1);
 }
@@ -46,6 +50,10 @@ export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
 
+export function HasClientConfigBackup(arg1) {
+  return window['go']['main']['App']['HasClientConfigBackup'](arg1);
+}
+
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
 }
@@ -72,6 +80,10 @@ export function RemoveClientConfig(arg1) {
 
 export function ReorderAccounts(arg1) {
   return window['go']['main']['App']['ReorderAccounts'](arg1);
+}
+
+export function RestoreClientConfigFile(arg1) {
+  return window['go']['main']['App']['RestoreClientConfigFile'](arg1);
 }
 
 export function SaveClientConfigFile(arg1, arg2) {

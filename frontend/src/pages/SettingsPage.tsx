@@ -1,6 +1,16 @@
 import { useState, useEffect } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { GetSettings, SaveSettings } from '../../wailsjs/go/main/App'
 import { account } from '../../wailsjs/go/models'
+
+function generateToken(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  let result = 'sk-'
+  for (let i = 0; i < 32; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<account.Settings>(new account.Settings({
@@ -27,6 +37,9 @@ export default function SettingsPage() {
       console.error('Failed to save settings:', err)
     }
   }
+
+  const baseURL = `http://127.0.0.1:${settings.port}`
+  const effectiveToken = settings.bridge_token || 'qoder2api'
 
   return (
     <div className="settings-page">
@@ -67,13 +80,38 @@ export default function SettingsPage() {
             />
           </div>
 
-          <div className="setting-note">
-            <div className="note-icon">💡</div>
-            <div>
-              <strong>提示：</strong>API 转换格式现在可以在账号管理页面为每个账号单独设置；
-              模型映射已迁移到「客户端」页面，按 Agent 分别配置。
+          <div className="setting-item">
+            <div className="setting-label">
+              <span>Base URL</span>
+              <span className="setting-hint">CLI 工具连接 Bridge 的地址</span>
+            </div>
+            <code className="storage-path" style={{ fontSize: 12 }}>{baseURL}</code>
+          </div>
+
+          <div className="setting-item">
+            <div className="setting-label">
+              <span>Access Token</span>
+              <span className="setting-hint">CLI 工具鉴权凭证，空则使用默认值</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="text"
+                value={settings.bridge_token || ''}
+                placeholder={effectiveToken}
+                onChange={e => setSettings({...settings, bridge_token: e.target.value} as account.Settings)}
+                className="setting-input"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <button
+                className="icon-btn icon-btn-reload"
+                title="自动生成 token"
+                onClick={() => setSettings({...settings, bridge_token: generateToken()} as account.Settings)}
+              >
+                <RefreshCw size={15} />
+              </button>
             </div>
           </div>
+
         </div>
 
         {/* 应用配置 */}
@@ -161,6 +199,10 @@ export default function SettingsPage() {
             <div className="storage-item">
               <span className="storage-label">配置文件</span>
               <code className="storage-path">~/.qoder2api/settings.json</code>
+            </div>
+            <div className="storage-item">
+              <span className="storage-label">配置备份</span>
+              <code className="storage-path">~/.qoder2api/backups/</code>
             </div>
           </div>
         </div>

@@ -127,6 +127,7 @@ export namespace account {
 	    auto_start: boolean;
 	    log_level: string;
 	    quota_refresh_interval: number;
+	    bridge_token?: string;
 	    model_mapping?: Record<string, string>;
 	    model_mappings?: Record<string, any>;
 	
@@ -140,6 +141,7 @@ export namespace account {
 	        this.auto_start = source["auto_start"];
 	        this.log_level = source["log_level"];
 	        this.quota_refresh_interval = source["quota_refresh_interval"];
+	        this.bridge_token = source["bridge_token"];
 	        this.model_mapping = source["model_mapping"];
 	        this.model_mappings = source["model_mappings"];
 	    }

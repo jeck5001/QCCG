@@ -17,11 +17,12 @@ import (
 )
 
 type App struct {
-	ctx        context.Context
-	bridge     *bridge
-	bridgeSrv  *http.Server
-	bridgeMu   sync.Mutex
-	bridgePort int
+	ctx         context.Context
+	bridge      *bridge
+	bridgeSrv   *http.Server
+	bridgeMu    sync.Mutex
+	bridgePort  int
+	bridgeToken string // 自定义鉴权 token，空则使用默认值 "qoder2api"
 }
 
 func NewApp() *App {
@@ -46,6 +47,9 @@ func (a *App) startup(ctx context.Context) {
 		logger.SetLevel(settings.LogLevel)
 		logger.Info("Settings loaded: port=%d, log_level=%s", settings.Port, settings.LogLevel)
 		a.bridgePort = settings.Port
+		if settings.BridgeToken != "" {
+			a.bridgeToken = settings.BridgeToken
+		}
 	} else {
 		logger.Error("Failed to load settings: %v", err)
 	}
@@ -251,6 +255,11 @@ func (a *App) GetSettings() (*account.Settings, error) {
 func (a *App) SaveSettings(s *account.Settings) error {
 	logger.SetLevel(s.LogLevel)
 	a.bridgePort = s.Port
+	if s.BridgeToken != "" {
+		a.bridgeToken = s.BridgeToken
+	} else {
+		a.bridgeToken = ""
+	}
 	if s.QuotaRefreshInterval > 0 && s.QuotaRefreshInterval < 10 {
 		s.QuotaRefreshInterval = 10
 	}

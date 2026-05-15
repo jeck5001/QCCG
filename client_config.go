@@ -33,11 +33,22 @@ type ClientConfig struct {
 // 内部 marker：用于识别「这一段配置是 qoder2api 写入的」，
 // 移除时只移除自己写的部分，不动用户其它配置。
 const (
-	qoderMarkerKey   = "_qoder2api_managed"
-	qoderProviderID  = "qoder2api"
-	qoderAPIKey      = "qoder2api"
-	codexProviderURL = "/v1"
+	qoderProviderID    = "qoder2api"
+	defaultQoderAPIKey = "qoder2api"
+	codexProviderURL   = "/v1"
 )
+
+func (a *App) effectiveToken() string {
+	if a.bridgeToken != "" {
+		return a.bridgeToken
+	}
+	return defaultQoderAPIKey
+}
+
+func hasBackupFile(home, clientType string) bool {
+	_, err := os.Stat(backupPath(home, clientType))
+	return err == nil
+}
 
 func bridgeBaseURL(port int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -45,6 +56,7 @@ func bridgeBaseURL(port int) string {
 
 func (a *App) GetClientConfigs() []ClientConfig {
 	port := a.bridgePort
+	token := a.effectiveToken()
 	home, _ := os.UserHomeDir()
 
 	configs := []ClientConfig{
@@ -54,7 +66,7 @@ func (a *App) GetClientConfigs() []ClientConfig {
 			Icon:       "🧠",
 			ConfigPath: filepath.Join(home, ".claude", "settings.json"),
 			BaseURL:    bridgeBaseURL(port),
-			EnvVars:    fmt.Sprintf(`export ANTHROPIC_BASE_URL="http://127.0.0.1:%d"`+"\n"+`export ANTHROPIC_AUTH_TOKEN="%s"`, port, qoderAPIKey),
+			EnvVars:    fmt.Sprintf(`export ANTHROPIC_BASE_URL="http://127.0.0.1:%d"`+"\n"+`export ANTHROPIC_AUTH_TOKEN="%s"`, port, token),
 		},
 		{
 			Type:       "codex",
@@ -70,7 +82,7 @@ func (a *App) GetClientConfigs() []ClientConfig {
 			Icon:       "🌟",
 			ConfigPath: filepath.Join(home, ".gemini", ".env"),
 			BaseURL:    bridgeBaseURL(port),
-			EnvVars:    fmt.Sprintf(`export GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:%d"`+"\n"+`export GEMINI_API_KEY="%s"`, port, qoderAPIKey),
+			EnvVars:    fmt.Sprintf(`export GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:%d"`+"\n"+`export GEMINI_API_KEY="%s"`, port, token),
 		},
 	}
 
@@ -88,17 +100,18 @@ func (a *App) GetClientConfigs() []ClientConfig {
 
 func (a *App) ApplyClientConfig(clientType, model string) error {
 	port := a.bridgePort
+	token := a.effectiveToken()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("home dir: %w", err)
 	}
 	switch clientType {
 	case "claude":
-		return writeClaudeConfig(home, port, model)
+		return writeClaudeConfig(home, port, token, model)
 	case "codex":
-		return writeCodexConfig(home, port, model)
+		return writeCodexConfig(home, port, token, model)
 	case "gemini":
-		return writeGeminiConfig(home, port, model)
+		return writeGeminiConfig(home, port, token, model)
 	}
 	return fmt.Errorf("unknown client type: %s", clientType)
 }
@@ -109,6 +122,63 @@ type ClientConfigFile struct {
 	Content string `json:"content"`
 	Format  string `json:"format"` // "json" / "toml" / "dotenv"
 	Existed bool   `json:"existed"`
+}
+
+func backupPath(home, clientType string) string {
+	return filepath.Join(home, ".qoder2api", "backups", clientType+"_config.bak")
+}
+
+// BackupClientConfigFile 在保存前把原文件备份到 ~/.qoder2api/backups/<type>_config.bak
+func (a *App) BackupClientConfigFile(clientType string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	src, _ := mainConfigPath(home, clientType)
+	if src == "" {
+		return fmt.Errorf("unknown client type: %s", clientType)
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	dst := backupPath(home, clientType)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return atomicWriteFile(dst, data, 0o644)
+}
+
+// HasClientConfigBackup 返回指定 client 是否存在备份文件
+func (a *App) HasClientConfigBackup(clientType string) bool {
+	home, _ := os.UserHomeDir()
+	return hasBackupFile(home, clientType)
+}
+
+// RestoreClientConfigFile 把备份文件还原回原路径，还原后删除备份
+func (a *App) RestoreClientConfigFile(clientType string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dst, _ := mainConfigPath(home, clientType)
+	if dst == "" {
+		return fmt.Errorf("unknown client type: %s", clientType)
+	}
+	bak := backupPath(home, clientType)
+	data, err := os.ReadFile(bak)
+	if err != nil {
+		return fmt.Errorf("no backup found: %w", err)
+	}
+	if err := atomicWriteFile(dst, data, 0o644); err != nil {
+		return err
+	}
+	_ = os.Remove(bak)
+	logger.Info("Restored %s config from backup", clientType)
+	return nil
 }
 
 // ReadClientConfigFile 读取指定 client 主配置文件原文（不做任何解析/合并），
@@ -143,6 +213,12 @@ func (a *App) SaveClientConfigFile(clientType, content string) error {
 	path, format := mainConfigPath(home, clientType)
 	if path == "" {
 		return fmt.Errorf("unknown client type: %s", clientType)
+	}
+	// 写入前先备份原文件（仅当备份不存在时才备份，保留最早的"干净"版本）
+	if !a.HasClientConfigBackup(clientType) {
+		if err := a.BackupClientConfigFile(clientType); err != nil {
+			logger.Info("Backup skipped for %s: %v", clientType, err)
+		}
 	}
 	switch format {
 	case "json":
@@ -211,11 +287,11 @@ func readJSONObjectOrEmpty(path string) (map[string]interface{}, error) {
 	return m, nil
 }
 
-func writeJSONObjectAtomic(path string, m map[string]interface{}) error {
+func writeJSONObjectOrdered(path string, m map[string]interface{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(m, "", "  ")
+	data, err := marshalJSONOrderPreserved(m)
 	if err != nil {
 		return err
 	}
@@ -224,6 +300,51 @@ func writeJSONObjectAtomic(path string, m map[string]interface{}) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// marshalJSONOrderPreserved 按预定义顺序输出 JSON 字段（避免 Go map 遍历顺序不确定的问题）
+// Claude settings.json 的顶级键顺序：env, enabledPlugins, permissions, model, ...
+var topLevelOrder = []string{"env", "enabledPlugins", "permissions", "model", "extensions", "hooks"}
+
+func marshalJSONOrderPreserved(v interface{}) ([]byte, error) {
+	switch obj := v.(type) {
+	case map[string]interface{}:
+		var b strings.Builder
+		keySet := make(map[string]bool)
+		keys := make([]string, 0, len(obj))
+		for _, k := range topLevelOrder {
+			if _, ok := obj[k]; ok {
+				keys = append(keys, k)
+				keySet[k] = true
+			}
+		}
+		// 不在预定义顺序里的 key 按字母序追加
+		extras := make([]string, 0)
+		for k := range obj {
+			if !keySet[k] {
+				extras = append(extras, k)
+			}
+		}
+		sort.Strings(extras)
+		keys = append(keys, extras...)
+		b.WriteString("{\n")
+		for i, k := range keys {
+			// 子对象用标准 MarshalIndent，再整体缩进
+			valBytes, err := json.MarshalIndent(obj[k], "  ", "  ")
+			if err != nil {
+				return nil, err
+			}
+			comma := ","
+			if i == len(keys)-1 {
+				comma = ""
+			}
+			fmt.Fprintf(&b, "  %q: %s%s\n", k, valBytes, comma)
+		}
+		b.WriteString("}")
+		return []byte(b.String()), nil
+	default:
+		return json.MarshalIndent(v, "", "  ")
+	}
 }
 
 func readClientStatus(clientType, home string) (applied bool, model string, err error) {
@@ -244,11 +365,17 @@ func readClientStatus(clientType, home string) (applied bool, model string, err 
 //
 //	{ "env": { "ANTHROPIC_BASE_URL": "...", "ANTHROPIC_AUTH_TOKEN": "...", ... } }
 //
-// 我们只改 env 子树里我们关心的几个 key，并在顶层埋一个 _qoder2api_managed marker
 // 用于识别状态；其它字段（hooks/permissions/MCP 等）原样保留。
 
-func writeClaudeConfig(home string, port int, model string) error {
+func writeClaudeConfig(home string, port int, token, model string) error {
 	path := filepath.Join(home, ".claude", "settings.json")
+
+	// 读取原始文件（预留，当前未使用但保持可读性）
+	_ /*data*/, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	root, err := readJSONObjectOrEmpty(path)
 	if err != nil {
 		return err
@@ -259,16 +386,14 @@ func writeClaudeConfig(home string, port int, model string) error {
 		env = map[string]interface{}{}
 	}
 	env["ANTHROPIC_BASE_URL"] = bridgeBaseURL(port)
-	env["ANTHROPIC_AUTH_TOKEN"] = qoderAPIKey
+	env["ANTHROPIC_AUTH_TOKEN"] = token
 	if model != "" {
-		// 不强制写 SONNET/OPUS/HAIKU 三个槽位，避免覆盖用户的偏好。
-		// 单一 model 由客户端自行选择，bridge 内部模型映射会兜底。
 		env["ANTHROPIC_MODEL"] = model
 	}
 	root["env"] = env
-	root[qoderMarkerKey] = true
 
-	if err := writeJSONObjectAtomic(path, root); err != nil {
+	// 按固定顺序输出 JSON 以避免字段顺序漂移
+	if err := writeJSONObjectOrdered(path, root); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	logger.Info("Wrote Claude Code config: %s (model=%s)", path, model)
@@ -291,14 +416,13 @@ func removeClaudeConfig(home string) error {
 			root["env"] = env
 		}
 	}
-	delete(root, qoderMarkerKey)
 	if len(root) == 0 {
 		// 完全是我们写的，直接删文件
 		_ = os.Remove(path)
 		logger.Info("Removed Claude Code config: %s", path)
 		return nil
 	}
-	if err := writeJSONObjectAtomic(path, root); err != nil {
+	if err := writeJSONObjectOrdered(path, root); err != nil {
 		return err
 	}
 	logger.Info("Cleaned qoder2api fields from %s", path)
@@ -306,13 +430,13 @@ func removeClaudeConfig(home string) error {
 }
 
 func readClaudeStatus(home string) (bool, string, error) {
+	if !hasBackupFile(home, "claude") {
+		return false, "", nil
+	}
 	path := filepath.Join(home, ".claude", "settings.json")
 	root, err := readJSONObjectOrEmpty(path)
 	if err != nil {
-		return false, "", err
-	}
-	if _, ok := root[qoderMarkerKey]; !ok {
-		return false, "", nil
+		return true, "", nil
 	}
 	model := ""
 	if env, ok := root["env"].(map[string]interface{}); ok {
@@ -349,7 +473,7 @@ func codexProviderTable(port int) map[string]interface{} {
 	}
 }
 
-func writeCodexConfig(home string, port int, model string) error {
+func writeCodexConfig(home string, port int, token, model string) error {
 	dir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -377,7 +501,6 @@ func writeCodexConfig(home string, port int, model string) error {
 	}
 	providers[qoderProviderID] = codexProviderTable(port)
 	doc["model_providers"] = providers
-	doc[qoderMarkerKey] = true
 
 	out, err := toml.Marshal(doc)
 	if err != nil {
@@ -390,8 +513,8 @@ func writeCodexConfig(home string, port int, model string) error {
 	// 同步写 auth.json
 	authPath := filepath.Join(dir, "auth.json")
 	auth, _ := readJSONObjectOrEmpty(authPath)
-	auth["OPENAI_API_KEY"] = qoderAPIKey
-	if err := writeJSONObjectAtomic(authPath, auth); err != nil {
+	auth["OPENAI_API_KEY"] = token
+	if err := writeJSONObjectOrdered(authPath, auth); err != nil {
 		return err
 	}
 
@@ -422,7 +545,6 @@ func removeCodexConfig(home string) error {
 				doc["model_providers"] = providers
 			}
 		}
-		delete(doc, qoderMarkerKey)
 		if len(doc) == 0 {
 			_ = os.Remove(tomlPath)
 		} else {
@@ -439,13 +561,13 @@ func removeCodexConfig(home string) error {
 	// auth.json: 只移除我们写的 OPENAI_API_KEY=qoder2api
 	authPath := filepath.Join(dir, "auth.json")
 	if auth, err := readJSONObjectOrEmpty(authPath); err == nil {
-		if v, ok := auth["OPENAI_API_KEY"].(string); ok && v == qoderAPIKey {
+		if v, ok := auth["OPENAI_API_KEY"].(string); ok && v == defaultQoderAPIKey {
 			delete(auth, "OPENAI_API_KEY")
 		}
 		if len(auth) == 0 {
 			_ = os.Remove(authPath)
 		} else {
-			_ = writeJSONObjectAtomic(authPath, auth)
+			_ = writeJSONObjectOrdered(authPath, auth)
 		}
 	}
 	logger.Info("Cleaned qoder2api fields from Codex config")
@@ -453,20 +575,17 @@ func removeCodexConfig(home string) error {
 }
 
 func readCodexStatus(home string) (bool, string, error) {
+	if !hasBackupFile(home, "codex") {
+		return false, "", nil
+	}
 	tomlPath := filepath.Join(home, ".codex", "config.toml")
 	data, err := os.ReadFile(tomlPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, "", nil
-		}
-		return false, "", err
+		return true, "", nil
 	}
 	var doc map[string]interface{}
 	if err := toml.Unmarshal(data, &doc); err != nil {
-		return false, "", err
-	}
-	if _, ok := doc[qoderMarkerKey]; !ok {
-		return false, "", nil
+		return true, "", nil
 	}
 	model, _ := doc["model"].(string)
 	return true, model, nil
@@ -486,7 +605,7 @@ func readCodexStatus(home string) (bool, string, error) {
 // .env 用 dotenv 风格的 KV 解析，保留用户其它 KEY 行；marker 进 settings.json
 // 因为 .env 没有"嵌套字段"概念，无法保存 marker。
 
-func writeGeminiConfig(home string, port int, model string) error {
+func writeGeminiConfig(home string, port int, token, model string) error {
 	dir := filepath.Join(home, ".gemini")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -498,22 +617,11 @@ func writeGeminiConfig(home string, port int, model string) error {
 		return err
 	}
 	envMap["GOOGLE_GEMINI_BASE_URL"] = bridgeBaseURL(port)
-	envMap["GEMINI_API_KEY"] = qoderAPIKey
+	envMap["GEMINI_API_KEY"] = token
 	if model != "" {
 		envMap["GEMINI_MODEL"] = model
 	}
 	if err := writeDotEnv(envPath, envMap); err != nil {
-		return err
-	}
-
-	// settings.json 只埋 marker
-	settingsPath := filepath.Join(dir, "settings.json")
-	settings, err := readJSONObjectOrEmpty(settingsPath)
-	if err != nil {
-		return err
-	}
-	settings[qoderMarkerKey] = true
-	if err := writeJSONObjectAtomic(settingsPath, settings); err != nil {
 		return err
 	}
 	logger.Info("Wrote Gemini config: %s (model=%s)", envPath, model)
@@ -533,26 +641,12 @@ func removeGeminiConfig(home string) error {
 			_ = writeDotEnv(envPath, envMap)
 		}
 	}
-	settingsPath := filepath.Join(dir, "settings.json")
-	if settings, err := readJSONObjectOrEmpty(settingsPath); err == nil {
-		delete(settings, qoderMarkerKey)
-		if len(settings) == 0 {
-			_ = os.Remove(settingsPath)
-		} else {
-			_ = writeJSONObjectAtomic(settingsPath, settings)
-		}
-	}
 	logger.Info("Cleaned qoder2api fields from Gemini config")
 	return nil
 }
 
 func readGeminiStatus(home string) (bool, string, error) {
-	settingsPath := filepath.Join(home, ".gemini", "settings.json")
-	settings, err := readJSONObjectOrEmpty(settingsPath)
-	if err != nil {
-		return false, "", err
-	}
-	if _, ok := settings[qoderMarkerKey]; !ok {
+	if !hasBackupFile(home, "gemini") {
 		return false, "", nil
 	}
 	envMap, _ := readDotEnv(filepath.Join(home, ".gemini", ".env"))

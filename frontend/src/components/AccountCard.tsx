@@ -128,12 +128,12 @@ export default function AccountCard({ account: acct, onActivate, onDelete, refre
       <div className="ac-footer">
         <div className="ac-footer-actions">
           {!acct.active && (
-            <button title="激活" className="ac-action-btn" onClick={() => onActivate(acct.id)}>
+            <button title="激活" className="ac-action-btn ac-action-activate" onClick={() => onActivate(acct.id)}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             </button>
           )}
           {acct.active && <span className="ac-active-badge">使用中</span>}
-          <button title="刷新配额" className="ac-action-btn" onClick={fetchQuota}>
+          <button title="刷新配额" className="ac-action-btn ac-action-refresh" onClick={fetchQuota}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
           <button title="删除" className="ac-action-btn ac-action-danger" onClick={() => onDelete(acct.id)}>

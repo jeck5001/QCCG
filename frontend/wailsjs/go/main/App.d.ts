@@ -8,6 +8,8 @@ export function AddAccountByPAT(arg1:string):Promise<account.Account>;
 
 export function ApplyClientConfig(arg1:string,arg2:string):Promise<void>;
 
+export function BackupClientConfigFile(arg1:string):Promise<void>;
+
 export function CancelOAuthLogin(arg1:string):Promise<void>;
 
 export function ClearLogs():Promise<void>;
@@ -26,6 +28,8 @@ export function GetSettings():Promise<account.Settings>;
 
 export function GetStatus():Promise<account.Status>;
 
+export function HasClientConfigBackup(arg1:string):Promise<boolean>;
+
 export function HideWindow():Promise<void>;
 
 export function ListAccounts():Promise<Array<account.Account>>;
@@ -39,6 +43,8 @@ export function ReadClientConfigFile(arg1:string):Promise<main.ClientConfigFile>
 export function RemoveClientConfig(arg1:string):Promise<void>;
 
 export function ReorderAccounts(arg1:Array<string>):Promise<void>;
+
+export function RestoreClientConfigFile(arg1:string):Promise<void>;
 
 export function SaveClientConfigFile(arg1:string,arg2:string):Promise<void>;
 
