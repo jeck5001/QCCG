@@ -57,6 +57,10 @@ export default function ClientConfigPage() {
   const [fileError, setFileError] = useState<string | null>(null)
   const [fileToast, setFileToast] = useState<string | null>(null)
 
+  // 客户端模型名 → Qoder model.key 的待保存映射（按 agent 暂存到内存，仅在用户点击"保存"时写后端）
+  const [pendingMapping, setPendingMapping] = useState<Record<string, Record<string, string>> | null>(null)
+  const [mappingDirty, setMappingDirty] = useState(false)
+
   const refresh = async () => {
     try {
       const [c, m, s] = await Promise.all([
@@ -135,13 +139,28 @@ export default function ClientConfigPage() {
     }
   }
 
+  // 统一保存：同时写 CLI 配置文件 + 持久化模型映射到 Settings.json
   const handleSaveFile = async () => {
     if (!activeType) return
     setFileSaving(true)
     setFileError(null)
     try {
-      await SaveClientConfigFile(activeType, fileContent)
-      setFileDirty(false)
+      // 1. 写文件（仅当文件有改动时）
+      if (fileDirty) {
+        await SaveClientConfigFile(activeType, fileContent)
+        setFileDirty(false)
+      }
+      // 2. 写 Settings.ModelMappings（仅当映射有改动时）
+      if (mappingDirty && pendingMapping) {
+        const cur = await GetSettings()
+        const merged = new account.Settings({
+          ...(cur || {}),
+          model_mapping: undefined,
+          model_mappings: pendingMapping,
+        } as any)
+        await SaveSettings(merged)
+        setMappingDirty(false)
+      }
       setFileToast('已保存')
       setTimeout(() => setFileToast(null), 2000)
       await refresh()
@@ -226,6 +245,14 @@ export default function ClientConfigPage() {
               </div>
             )}
 
+            {/* 模型映射（按 agent 分组），改动暂存，"保存"按钮统一落盘 */}
+            <ModelMappingSection
+              agent={activeCfg.type}
+              qoderModels={qoderModels}
+              onMappingChange={(allMappings) => { setPendingMapping(allMappings); setMappingDirty(true) }}
+              onMappingClean={() => setMappingDirty(false)}
+            />
+
             {/* 配置文件编辑器（同卡片内分段） */}
             <div className="config-section-divider">
               <span className="section-title">📝 配置文件</span>
@@ -245,23 +272,23 @@ export default function ClientConfigPage() {
                 className="btn btn-secondary btn-sm"
                 onClick={() => handleApply(activeCfg)}
                 disabled={!status.running || applying === activeCfg.type}
-                title="把 base_url / api_key / marker 等关键字段补丁到上方编辑器（不会落盘，需点保存）"
+                title="向 CLI 配置文件注入 base_url / api_key / marker（直接落盘后刷新编辑器）"
               >
-                {applying === activeCfg.type ? '注入中…' : '一键配置'}
+                {applying === activeCfg.type ? '配置中…' : activeCfg.applied ? '更新配置' : '一键配置'}
               </button>
               {activeCfg.applied && (
                 <button
                   className="btn btn-danger btn-sm"
                   onClick={() => handleRemove(activeCfg)}
                   disabled={applying === activeCfg.type}
-                  title="清除 qoder2api 注入的字段（不会落盘，需点保存）"
+                  title="清除 CLI 配置文件中由 qoder2api 注入的字段（直接落盘）"
                 >移除</button>
               )}
               <button
                 className="btn btn-primary btn-sm"
                 onClick={handleSaveFile}
-                disabled={!fileDirty || fileSaving}
-                title="保存当前编辑器内容到配置文件"
+                disabled={(!fileDirty && !mappingDirty) || fileSaving}
+                title="保存当前编辑器内容到配置文件，并持久化模型映射"
               >
                 {fileSaving ? '保存中…' : '保存'}
               </button>
@@ -279,13 +306,6 @@ export default function ClientConfigPage() {
                 ⚠️ {fileError}
               </div>
             )}
-            {/* 模型映射区段 */}
-            <ModelMappingSection
-              agent={activeCfg.type}
-              qoderModels={qoderModels}
-              fileContent={fileContent}
-              onPatchFile={(next) => { setFileContent(next); setFileDirty(true) }}
-            />
 
           </div>
         </div>
@@ -302,9 +322,9 @@ export default function ClientConfigPage() {
 // 兼容老数据：Settings.ModelMapping (扁平 map) 仅当 ModelMappings[claude] 不存在时迁移到 claude 桶。
 //
 // 行为：
-//   - 改动行 → 设 dirty=true，并 debounce(500ms) 后自动 SaveSettings（无 "保存映射" 按钮）。
-//   - agent 切换、组件卸载前若 dirty 则立即 flush 一次 SaveSettings。
-//   - 模型映射是 bridge 内部转换层（client model → Qoder key），不写入 CLI 配置文件。
+//   - 改动行 → 调用 onMappingChange(allMappings) 通知父组件 dirty + 完整映射快照
+//   - 不直接调用 SaveSettings；落盘由父组件的"保存"按钮统一处理（同时保存 CLI 配置文件 + Settings）
+//   - 模型映射是 bridge 内部转换层，不写入 CLI 配置文件本体
 
 type Row = { id: number; from: string; to: string }
 let _rid = 1
@@ -313,234 +333,65 @@ const newRid = () => _rid++
 interface MappingProps {
   agent: string
   qoderModels: main.QoderModel[]
+  onMappingChange: (allMappings: Record<string, Record<string, string>>) => void
+  onMappingClean: () => void
 }
 
-function ModelMappingSection({ agent, qoderModels }: MappingProps) {
-  const [settings, setSettings] = useState<account.Settings | null>(null)
+function ModelMappingSection({ agent, qoderModels, onMappingChange, onMappingClean }: MappingProps) {
+  const [allMappings, setAllMappings] = useState<Record<string, Record<string, string>>>({})
   const [rows, setRows] = useState<Row[]>([])
-  const [dirty, setDirty] = useState(false)
-  const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [touched, setTouched] = useState(false)
 
   // 加载 / agent 切换时重新构造 rows
   useEffect(() => {
     let cancelled = false
     GetSettings().then(s => {
       if (cancelled) return
-      setSettings(s || null)
-      const mappings = (s?.model_mappings || {}) as Record<string, Record<string, string>>
+      const mappings = ((s?.model_mappings || {}) as Record<string, Record<string, string>>)
       let bucket: Record<string, string> | undefined = mappings[agent]
       if (!bucket && agent === 'claude' && s?.model_mapping && Object.keys(s.model_mapping).length > 0) {
         bucket = s.model_mapping
       }
       const list = bucket ? Object.entries(bucket).map(([from, to]) => ({ id: newRid(), from, to })) : []
+      setAllMappings(mappings)
       setRows(list)
-      setDirty(false)
       setError(null)
+      setTouched(false)
+      onMappingClean()
     }).catch(err => setError(String(err?.message || err)))
     return () => { cancelled = true }
   }, [agent])
 
-  // 自动保存：rows 变化 + dirty → debounce 500ms → SaveSettings
+  // rows 变化 → 重组 allMappings 并通知父
   useEffect(() => {
-    if (!dirty || !settings) return
-    const timer = setTimeout(async () => {
-      setSaving(true)
-      setError(null)
-      try {
-        const next: Record<string, string> = {}
-        for (const r of rows) {
-          const k = r.from.trim(), v = r.to.trim()
-          if (k && v) next[k] = v
-        }
-        const allMappings = { ...((settings.model_mappings || {}) as Record<string, Record<string, string>>) }
-        if (Object.keys(next).length === 0) delete allMappings[agent]
-        else allMappings[agent] = next
-
-        const merged = new account.Settings({
-          ...settings,
-          model_mapping: undefined,
-          model_mappings: allMappings,
-        } as any)
-        await SaveSettings(merged)
-        setSettings(merged)
-        setDirty(false)
-      } catch (err: any) {
-        setError(String(err?.message || err))
-      } finally {
-        setSaving(false)
-      }
-    }, 500)
-    return () => clearTimeout(timer)
-  }, [rows, dirty, settings, agent])
-
-  const datalistId = `mapping-${agent}-options`
-  const candidates = CLIENT_MODEL_OPTIONS_BY_AGENT[agent] || []
-
-  const addRow = () => { setRows([...rows, { id: newRid(), from: '', to: '' }]); setDirty(true) }
-  const updateRow = (id: number, key: 'from' | 'to', v: string) => {
-    setRows(rows.map(r => r.id === id ? { ...r, [key]: v } : r)); setDirty(true)
-  }
-  const removeRow = (id: number) => { setRows(rows.filter(r => r.id !== id)); setDirty(true) }
-  const fillDefaults = () => {
-    const existing = new Set(rows.map(r => r.from.trim()))
-    const adds = (DEFAULT_MAPPING_BY_AGENT[agent] || [])
-      .filter(([from]) => !existing.has(from))
-      .map(([from, to]) => ({ id: newRid(), from, to }))
-    if (adds.length > 0) { setRows([...rows, ...adds]); setDirty(true) }
-  }
-
-  return (
-    <div className="mapping-section">
-      <div className="mapping-section-header">
-        <span className="section-title">🔀 模型映射</span>
-        <span className="meta">
-          客户端模型名 → Qoder model.key
-          {saving ? ' · 保存中…' : (dirty ? ' · 待保存' : ' · 已保存')}
-        </span>
-        <span className="divider-spacer" />
-        <button className="btn btn-secondary btn-sm" onClick={fillDefaults} title="按家族关键字一键填充默认条目">默认</button>
-        <button className="btn btn-secondary btn-sm" onClick={addRow}>+ 加一行</button>
-      </div>
-
-      {error && <div className="config-warning">⚠️ {error}</div>}
-
-      {rows.length === 0 ? (
-        <div className="mapping-empty">未配置自定义映射，将使用内置默认表（{(DEFAULT_MAPPING_BY_AGENT[agent] || []).map(([f, t]) => `${f}→${t}`).join(' / ') || '无'}）</div>
-      ) : (
-        <table className="mapping-table">
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.id}>
-                <td>
-                  <input
-                    type="text"
-                    className="setting-input"
-                    placeholder="例如 sonnet 或 claude-sonnet-4-6"
-                    list={datalistId}
-                    value={r.from}
-                    onChange={e => updateRow(r.id, 'from', e.target.value)}
-                  />
-                </td>
-                <td className="arrow">→</td>
-                <td>
-                  {qoderModels.length > 0 ? (
-                    <select
-                      className="setting-select"
-                      value={r.to}
-                      onChange={e => updateRow(r.id, 'to', e.target.value)}
-                    >
-                      <option value="">请选择…</option>
-                      {qoderModels.map(m => (
-                        <option key={m.key} value={m.key}>{m.display_name} ({m.key}){m.is_default ? ' · 默认' : ''}</option>
-                      ))}
-                      {r.to && !qoderModels.some(m => m.key === r.to) && (
-                        <option value={r.to}>{r.to}（自定义/已下线）</option>
-                      )}
-                    </select>
-                  ) : (
-                    <select
-                      className="setting-select"
-                      value={r.to}
-                      onChange={e => updateRow(r.id, 'to', e.target.value)}
-                    >
-                      <option value="">请选择…</option>
-                      {FALLBACK_QODER_KEYS.map(k => <option key={k} value={k}>{k}</option>)}
-                    </select>
-                  )}
-                </td>
-                <td className="row-actions">
-                  <button className="btn-icon-sm" onClick={() => removeRow(r.id)} title="删除此行" aria-label="删除">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
-                      <line x1="18" y1="6" x2="6" y2="18"/>
-                      <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      <datalist id={datalistId}>
-        {candidates.map(m => <option key={m} value={m} />)}
-      </datalist>
-    </div>
-  )
-}
-  const [settings, setSettings] = useState<account.Settings | null>(null)
-  const [rows, setRows] = useState<Row[]>([])
-  const [dirty, setDirty] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // 加载 / agent 切换时重新构造 rows
-  useEffect(() => {
-    let cancelled = false
-    GetSettings().then(s => {
-      if (cancelled) return
-      setSettings(s || null)
-      const mappings = (s?.model_mappings || {}) as Record<string, Record<string, string>>
-      let bucket: Record<string, string> | undefined = mappings[agent]
-      // 老数据迁移：claude tab 第一次打开时把扁平 model_mapping 当作 claude 桶
-      if (!bucket && agent === 'claude' && s?.model_mapping && Object.keys(s.model_mapping).length > 0) {
-        bucket = s.model_mapping
-      }
-      const list = bucket ? Object.entries(bucket).map(([from, to]) => ({ id: newRid(), from, to })) : []
-      setRows(list)
-      setDirty(false)
-      setError(null)
-    }).catch(err => setError(String(err?.message || err)))
-    return () => { cancelled = true }
-  }, [agent])
-
-  const datalistId = `mapping-${agent}-options`
-  const candidates = CLIENT_MODEL_OPTIONS_BY_AGENT[agent] || []
-
-  const addRow = () => { setRows([...rows, { id: newRid(), from: '', to: '' }]); setDirty(true) }
-  const updateRow = (id: number, key: 'from' | 'to', v: string) => {
-    setRows(rows.map(r => r.id === id ? { ...r, [key]: v } : r)); setDirty(true)
-  }
-  const removeRow = (id: number) => { setRows(rows.filter(r => r.id !== id)); setDirty(true) }
-  const fillDefaults = () => {
-    const existing = new Set(rows.map(r => r.from.trim()))
-    const adds = (DEFAULT_MAPPING_BY_AGENT[agent] || [])
-      .filter(([from]) => !existing.has(from))
-      .map(([from, to]) => ({ id: newRid(), from, to }))
-    if (adds.length > 0) { setRows([...rows, ...adds]); setDirty(true) }
-  }
-
-  const handleSave = async () => {
-    if (!settings) return
-    setSaving(true)
-    setError(null)
-    try {
-      const next: Record<string, string> = {}
-      for (const r of rows) {
-        const k = r.from.trim(), v = r.to.trim()
-        if (k && v) next[k] = v
-      }
-      const allMappings = { ...((settings.model_mappings || {}) as Record<string, Record<string, string>>) }
-      if (Object.keys(next).length === 0) {
-        delete allMappings[agent]
-      } else {
-        allMappings[agent] = next
-      }
-      // 顺手把老的 model_mapping 清空（已迁移到 claude 桶）避免日后再次回滚
-      const merged = new account.Settings({
-        ...settings,
-        model_mapping: undefined,
-        model_mappings: allMappings,
-      } as any)
-      await SaveSettings(merged)
-      setSettings(merged)
-      setDirty(false)
-      onSavedFlash()
-    } catch (err: any) {
-      setError(String(err?.message || err))
-    } finally {
-      setSaving(false)
+    if (!touched) return
+    const next: Record<string, string> = {}
+    for (const r of rows) {
+      const k = r.from.trim(), v = r.to.trim()
+      if (k && v) next[k] = v
     }
+    const merged = { ...allMappings }
+    if (Object.keys(next).length === 0) delete merged[agent]
+    else merged[agent] = next
+    onMappingChange(merged)
+  }, [rows, touched])
+
+  const datalistId = `mapping-${agent}-options`
+  const candidates = CLIENT_MODEL_OPTIONS_BY_AGENT[agent] || []
+
+  const markTouched = () => { if (!touched) setTouched(true) }
+  const addRow = () => { setRows([...rows, { id: newRid(), from: '', to: '' }]); markTouched() }
+  const updateRow = (id: number, key: 'from' | 'to', v: string) => {
+    setRows(rows.map(r => r.id === id ? { ...r, [key]: v } : r)); markTouched()
+  }
+  const removeRow = (id: number) => { setRows(rows.filter(r => r.id !== id)); markTouched() }
+  const fillDefaults = () => {
+    const existing = new Set(rows.map(r => r.from.trim()))
+    const adds = (DEFAULT_MAPPING_BY_AGENT[agent] || [])
+      .filter(([from]) => !existing.has(from))
+      .map(([from, to]) => ({ id: newRid(), from, to }))
+    if (adds.length > 0) { setRows([...rows, ...adds]); markTouched() }
   }
 
   return (
@@ -551,12 +402,6 @@ function ModelMappingSection({ agent, qoderModels }: MappingProps) {
         <span className="divider-spacer" />
         <button className="btn btn-secondary btn-sm" onClick={fillDefaults} title="按家族关键字一键填充默认条目">默认</button>
         <button className="btn btn-secondary btn-sm" onClick={addRow}>+ 加一行</button>
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          title={dirty ? '保存当前 agent 的模型映射' : '无修改'}
-        >{saving ? '保存中…' : '保存映射'}</button>
       </div>
 
       {error && <div className="config-warning">⚠️ {error}</div>}
