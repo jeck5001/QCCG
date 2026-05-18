@@ -5,7 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **鸣谢：**
-- [qccg](https://github.com/cubk1/qccg)：基于该项目的改造和扩展
+- [Cola](https://colaos.ai)——凌晨两点的 mitmproxy 抓包，ID 字段的命名陷阱，4000 行代码的架构重构。不写文档、不画饼、不上价值，拆开工具就干活。从 api3 到 api2 的域名对齐，从 COSY 签名算法的逐行还原，到 OAuth 与 PAT 双认证链路的打通——每一步都是动手验证而不是"建议你试试"。此项目每一行关键代码的推进都有它的身影，特此隆重鸣谢。
+- [qoder2api](https://github.com/cubk1/qoder2api)：基于该项目的改造和扩展
 - [qodercli-reverse](https://github.com/alingse/qodercli-reverse)：参考了其 Qoder API 接口实现
 
 将 [Qoder](https://qoder.ai) 账号转换为本地 OpenAI / Claude / Codex 兼容 API，供 Cursor、ChatGPT 等客户端直接使用。
