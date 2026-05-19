@@ -2,7 +2,6 @@ package main
 
 import (
 	"qccg/internal/bridge"
-	"qccg/internal/common"
 	"qccg/internal/cosy"
 	"context"
 	"encoding/json"
@@ -20,9 +19,14 @@ import (
 	"qccg/logger"
 )
 
-// QoderModel 从 common 包导出，确保 Wails 在 main 命名空间生成 bindings。
-// 类型定义保持在 common.QoderModel 以消除循环依赖。
-type QoderModel = common.QoderModel
+// QoderModel 定义在 main 包以确保 Wails 生成 main.QoderModel 绑定。
+type QoderModel struct {
+	Key            string `json:"key"`
+	DisplayName    string `json:"display_name"`
+	Enable         bool   `json:"enable"`
+	IsDefault      bool   `json:"is_default"`
+	MaxInputTokens int    `json:"max_input_tokens,omitempty"`
+}
 
 type App struct {
 	ctx         context.Context
@@ -353,7 +357,21 @@ func (a *App) ListQoderModels() ([]QoderModel, error) {
 	if b == nil {
 		return nil, fmt.Errorf("BRIDGE_NOT_RUNNING: bridge 未启动，请先激活账号并启动 bridge")
 	}
-	return b.ListAvailableModels()
+	models, err := b.ListAvailableModels()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]QoderModel, len(models))
+	for i, m := range models {
+		out[i] = QoderModel{
+			Key:            m.Key,
+			DisplayName:    m.DisplayName,
+			Enable:         m.Enable,
+			IsDefault:      m.IsDefault,
+			MaxInputTokens: m.MaxInputTokens,
+		}
+	}
+	return out, nil
 }
 
 // CleanupAllData 清理 qccg 产生的本地数据与注入配置。
