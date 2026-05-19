@@ -285,7 +285,7 @@ func (a *App) ReadClientConfigFile(clientType string) (*ClientConfigFile, error)
 	return &result, nil
 }
 
-// SaveClientConfigFile 保存编辑器内容回主配置文件，按 format 做语法校验。
+// validateConfigContent 对编辑器内容按 format 做语法校验。
 // .env 不校验（dotenv 没有官方语法）；JSON / TOML 校验失败直接返回 error，
 // 不写入磁盘，避免破坏原文件。
 func validateConfigContent(format, content string) error {

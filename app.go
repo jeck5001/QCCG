@@ -2,6 +2,7 @@ package main
 
 import (
 	"qccg/internal/bridge"
+	"qccg/internal/common"
 	"qccg/internal/cosy"
 	"context"
 	"encoding/json"
@@ -19,8 +20,9 @@ import (
 	"qccg/logger"
 )
 
-// QoderModel is re-exported from bridge so Wails generates main.QoderModel bindings.
-type QoderModel = bridge.QoderModel
+// QoderModel 从 common 包导出，确保 Wails 在 main 命名空间生成 bindings。
+// 类型定义保持在 common.QoderModel 以消除循环依赖。
+type QoderModel = common.QoderModel
 
 type App struct {
 	ctx         context.Context
@@ -344,7 +346,7 @@ func (a *App) GetAccountQuota(accountID string) (*account.QuotaInfo, error) {
 
 // ListQoderModels 通过当前激活账号的 bridge 拉取 Qoder 上游可用模型列表，
 // 供「模型映射」配置的下拉选择使用。如果 bridge 未启动则返回错误。
-func (a *App) ListQoderModels() ([]bridge.QoderModel, error) {
+func (a *App) ListQoderModels() ([]QoderModel, error) {
 	a.bridgeMu.Lock()
 	b := a.bridge
 	a.bridgeMu.Unlock()

@@ -35,7 +35,7 @@ type Settings struct {
 	LogLevel             string                       `json:"log_level"`                // "info" | "debug" | "error"
 	QuotaRefreshInterval int                          `json:"quota_refresh_interval"`   // 秒，0=不自动刷新
 	BridgeToken          string                       `json:"bridge_token,omitempty"`   // 自定义鉴权 token，空则使用默认值 "qccg"
-	ModelMapping         map[string]string            `json:"model_mapping,omitempty"`  // [DEPRECATED] 旧扁平映射（向后兼容，启动时自动迁移到 ModelMappings["claude"]）
+	ModelMapping         map[string]string            `json:"model_mapping,omitempty"`  // [DEPRECATED] 旧扁平映射（向后兼容，MapModel 中作为兜底回退使用）
 	ModelMappings        map[string]map[string]string `json:"model_mappings,omitempty"` // agent (claude/codex/gemini) → 客户端模型名 → Qoder model.key
 }
 

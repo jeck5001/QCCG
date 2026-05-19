@@ -82,7 +82,7 @@ func TestNormalizeMessageContent_Array(t *testing.T) {
 	}
 }
 
-// ===== mapModel / lookupMapping =====
+// ===== MapModel / lookupMapping =====
 // 验证模糊匹配算法：精确 → 长度倒序 → 双向 substring → ToLower 兜底。
 // 参考 ccx/backend-go/internal/config/config_utils.go::RedirectModel。
 

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"qccg/internal/cosy"
+	"qccg/internal/common"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-
 
 	"qccg/account"
 	"qccg/logger"
@@ -76,10 +76,10 @@ type Bridge struct {
 	templateBase map[string]interface{}
 }
 
-// newBridge 创建 API 转换桥接
+// NewBridge 创建 API 转换桥接。
 // 支持两种认证方式：
-// 1. OAuth device token (dt-xxx): 直接使用，调用 /api/v1/userinfo 获取用户信息
-// 2. Personal Access Token (PAT): 调用 exchangeJobToken 转换为 session token
+//  1. OAuth device token (dt-xxx): 直接使用，调用 /api/v1/userinfo 获取用户信息
+//  2. Personal Access Token (PAT): 调用 ExchangeJobToken 转换为 session token
 func NewBridge(pat string, templateBase map[string]interface{}) (*Bridge, error) {
 	mid := cosy.NewUUID()
 	mtoken := cosy.NewBase64Token()
@@ -139,18 +139,9 @@ func NewBridge(pat string, templateBase map[string]interface{}) (*Bridge, error)
 	}, nil
 }
 
-// QoderModel 是返回给前端的精简模型条目（仅保留下拉选择必要字段）
-type QoderModel struct {
-	Key            string `json:"key"`
-	DisplayName    string `json:"display_name"`
-	Enable         bool   `json:"enable"`
-	IsDefault      bool   `json:"is_default"`
-	MaxInputTokens int    `json:"max_input_tokens,omitempty"`
-}
-
-// listAvailableModels 通过 cosy 签名调用 /algo/api/v2/model/list 拉取上游模型清单。
+// ListAvailableModels 通过 cosy 签名调用 /algo/api/v2/model/list 拉取上游模型清单。
 // 返回顶层 assistant 数组中 enable=true 的模型，按 is_default desc + display_name asc 排序。
-func (b *Bridge) ListAvailableModels() ([]QoderModel, error) {
+func (b *Bridge) ListAvailableModels() ([]common.QoderModel, error) {
 	const modelListURL = "https://api2.qoder.sh/algo/api/v2/model/list?Encode=1"
 	resp, err := b.client.callGet(modelListURL)
 	if err != nil {
@@ -163,9 +154,9 @@ func (b *Bridge) ListAvailableModels() ([]QoderModel, error) {
 	return models, nil
 }
 
-func parseQoderModels(resp map[string]interface{}) []QoderModel {
+func parseQoderModels(resp map[string]interface{}) []common.QoderModel {
 	rawList, _ := resp["assistant"].([]interface{})
-	out := make([]QoderModel, 0, len(rawList))
+	out := make([]common.QoderModel, 0, len(rawList))
 	for _, it := range rawList {
 		m, ok := it.(map[string]interface{})
 		if !ok {
@@ -175,7 +166,7 @@ func parseQoderModels(resp map[string]interface{}) []QoderModel {
 		if !enable {
 			continue
 		}
-		out = append(out, QoderModel{
+		out = append(out, common.QoderModel{
 			Key:            StrVal(m, "key"),
 			DisplayName:    StrVal(m, "display_name"),
 			Enable:         enable,
@@ -186,7 +177,7 @@ func parseQoderModels(resp map[string]interface{}) []QoderModel {
 	return out
 }
 
-// deepCopyMap does a JSON round-trip deep copy
+// DeepCopyMap does a JSON round-trip deep copy.
 func DeepCopyMap(m map[string]interface{}) map[string]interface{} {
 	data, _ := json.Marshal(m)
 	var out map[string]interface{}
@@ -307,7 +298,7 @@ func (b *Bridge) CallQoder(ctx context.Context, agent string, messages []interfa
 	return streamErr
 }
 
-// redactRequestBodyJSON 接收原始请求 JSON 字节，深拷贝后把可能含敏感对话内容的字段
+// RedactRequestBodyJSON 接收原始请求 JSON 字节，深拷贝后把可能含敏感对话内容的字段
 // （messages[*].content / system / input / tools[*].description 等）的字符串值替换为
 // `<redacted len=N>`，保留 JSON 结构和长度信息便于排查问题，但不泄露用户对话原文。
 //
@@ -379,7 +370,7 @@ func StrValDefault(m map[string]interface{}, key, def string) string {
 	return def
 }
 
-// inferAgent 根据模型名启发式推断 agent 类型，用于 chat/completions 这种多 agent 共用 endpoint
+// InferAgent 根据模型名启发式推断 agent 类型，用于 chat/completions 这种多 agent 共用 endpoint
 // 时选择正确的映射桶。模型名命中关键字按 gemini > claude > 默认 codex。
 func InferAgent(model string) string {
 	low := strings.ToLower(model)
@@ -411,7 +402,7 @@ var defaultModelMapping = map[string]string{
 	"gemini": "performance",
 }
 
-// mapModel 解析顺序（参考 ccx 的 RedirectModel 算法）：
+// MapModel 解析顺序（参考 ccx 的 RedirectModel 算法）：
 //  1. 用户 Settings.ModelMappings[agent] 精确命中
 //  2. 用户 Settings.ModelMappings[agent] 双向 substring 模糊匹配（按 source 长度倒序，最长优先）
 //  3. 用户旧 Settings.ModelMapping (deprecated 扁平表) 命中

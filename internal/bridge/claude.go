@@ -251,7 +251,7 @@ func (b *Bridge) HandleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleListModels 实现 GET /v1/models，返回 Claude API 格式的模型列表。
+// HandleListModels 实现 GET /v1/models，返回 Claude API 格式的模型列表。
 // Claude Code 通过此接口获取 context_window 大小，用于决定何时触发 compact（80% 阈值）。
 func (b *Bridge) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	models, err := b.ListAvailableModels()
@@ -302,7 +302,7 @@ func WriteClaudeErr(w http.ResponseWriter, err error) {
 	w.Write(body)
 }
 
-// mergeToolCallChunks 将流式 tool_call 增量 chunk 按 index 合并
+// MergeToolCallChunks 将流式 tool_call 增量 chunk 按 index 合并。
 func MergeToolCallChunks(merged map[int]map[string]interface{}, chunks []interface{}) {
 	for _, chunk := range chunks {
 		tc, ok := chunk.(map[string]interface{})
@@ -341,7 +341,7 @@ func MergeToolCallChunks(merged map[int]map[string]interface{}, chunks []interfa
 	}
 }
 
-// sortedToolCalls 按 index 排序返回合并后的 tool calls
+// SortedToolCalls 按 index 排序返回合并后的 tool calls。
 func SortedToolCalls(merged map[int]map[string]interface{}) []map[string]interface{} {
 	if len(merged) == 0 {
 		return nil
