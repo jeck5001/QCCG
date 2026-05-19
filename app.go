@@ -19,6 +19,9 @@ import (
 	"qccg/logger"
 )
 
+// QoderModel is re-exported from bridge so Wails generates main.QoderModel bindings.
+type QoderModel = bridge.QoderModel
+
 type App struct {
 	ctx         context.Context
 	bridge      *bridge.Bridge
