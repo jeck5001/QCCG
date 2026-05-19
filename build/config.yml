@@ -31,9 +31,10 @@ dev_mode:
       - "*.ts"
     git_ignore: true
   executes:
-    - cmd: wails3 build
+    - cmd: go build -o build/bin/qccg .
       type: blocking
-    - cmd: cd frontend && npm run dev
+    - cmd: npm run dev
+      dir: frontend
       type: background
     - cmd: ./build/bin/qccg
       type: primary
