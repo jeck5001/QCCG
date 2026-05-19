@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -579,14 +580,163 @@ func readClaudeStatus(home string) (bool, string, error) {
 //
 //	{ "OPENAI_API_KEY": "qccg" }
 //
-// 同样保留用户其它 model_providers 不动。
+// 写配置时用字符串级 TOML 编辑（而非 Unmarshal → Marshal），
+// 保留用户的注释、空行、MCP 配置、profiles 和其它 provider 节。
+// model_provider ID 会做稳定化处理：如果用户的活跃 ID 不是保留字（openai/ollama 等），
+// 就保留旧 ID 不变，避免 Codex 会话历史丢失。
 
-func codexProviderTable(port int) map[string]interface{} {
-	return map[string]interface{}{
-		"name":     "QCCG",
-		"base_url": bridgeBaseURL(port) + codexProviderURL,
-		"wire_api": "responses",
+// reservedCodexProviderIDs 是 Codex CLI 内置的 provider ID 列表。
+// 当用户当前 model_provider 是其中一个时，QCCG 使用自己的 "qccg" ID；
+// 否则保留用户的自定义 ID 以保持会话历史不丢失。
+var reservedCodexProviderIDs = map[string]bool{
+	"openai":         true,
+	"ollama":         true,
+	"lmstudio":       true,
+	"oss":            true,
+	"ollama-chat":    true,
+	"amazon-bedrock": true,
+	"qccg":           true,
+}
+
+func isReservedCodexProviderID(id string) bool {
+	return reservedCodexProviderIDs[strings.ToLower(strings.TrimSpace(id))]
+}
+
+// determineCodexProviderID 解析现有 config.toml 文本，找出活跃的 model_provider。
+// 如果是自定义（非保留）ID → 保留它（稳定化）；否则回落到 "qccg"。
+func determineCodexProviderID(tomlText string) string {
+	if tomlText == "" {
+		return qoderProviderID
 	}
+	var doc map[string]interface{}
+	if err := toml.Unmarshal([]byte(tomlText), &doc); err != nil {
+		return qoderProviderID
+	}
+	mp, _ := doc["model_provider"].(string)
+	mp = strings.TrimSpace(mp)
+	if mp == "" || isReservedCodexProviderID(mp) {
+		return qoderProviderID
+	}
+	return mp
+}
+
+// setTomlTopLevelKey 在 root table（第一个 [section] 之前）替换或新增一个 key=value 行。
+// keyLine 是完整行如 `model_provider = "qccg"`。
+// 不影响任何 [section] 块内的同名 key。
+func setTomlTopLevelKey(text, key, keyLine string) string {
+	firstSecRe := regexp.MustCompile(`(?m)^\s*\[`)
+	firstSecLoc := firstSecRe.FindStringIndex(text)
+
+	var rootText, sectionsText string
+	if firstSecLoc == nil {
+		rootText = text
+		sectionsText = ""
+	} else {
+		rootText = text[:firstSecLoc[0]]
+		sectionsText = text[firstSecLoc[0]:]
+	}
+
+	keyRe := regexp.MustCompile(fmt.Sprintf(`(?m)^\s*%s\s*=.*$`, regexp.QuoteMeta(key)))
+	if keyRe.MatchString(rootText) {
+		rootText = keyRe.ReplaceAllString(rootText, keyLine)
+	} else {
+		if rootText == "" {
+			rootText = keyLine
+		} else {
+			rootText = strings.TrimRight(rootText, "\n") + "\n" + keyLine
+		}
+	}
+
+	if rootText != "" && !strings.HasSuffix(rootText, "\n") {
+		rootText += "\n"
+	}
+	return rootText + sectionsText
+}
+
+// removeTomlTopLevelKey 从 root table 中移除一个 key=value 行。
+func removeTomlTopLevelKey(text, key string) string {
+	firstSecRe := regexp.MustCompile(`(?m)^\s*\[`)
+	firstSecLoc := firstSecRe.FindStringIndex(text)
+
+	var rootText, sectionsText string
+	if firstSecLoc == nil {
+		rootText = text
+		sectionsText = ""
+	} else {
+		rootText = text[:firstSecLoc[0]]
+		sectionsText = text[firstSecLoc[0]:]
+	}
+
+	keyRe := regexp.MustCompile(fmt.Sprintf(`(?m)^\s*%s\s*=.*\n?`, regexp.QuoteMeta(key)))
+	rootText = keyRe.ReplaceAllString(rootText, "")
+
+	return strings.TrimRight(rootText, "\n") + sectionsText
+}
+
+// upsertTomlSection 替换或追加一个 TOML [section] 块。
+// sectionName 形如 "model_providers.qccg"。
+// sectionBody 是 section 内部的内容（不含 [header] 行）。
+func upsertTomlSection(text, sectionName, sectionBody string) string {
+	fullSection := "[" + sectionName + "]\n" + sectionBody
+
+	headerPat := `(?m)^\[` + regexp.QuoteMeta(sectionName) + `\]\s*\n?`
+	headerRe := regexp.MustCompile(headerPat)
+
+	loc := headerRe.FindStringIndex(text)
+	if loc == nil {
+		// 不存在 → 追加到末尾。
+		text = strings.TrimRight(text, "\n")
+		if text != "" {
+			text += "\n\n"
+		}
+		return text + fullSection + "\n"
+	}
+
+	// 找到该 section 的结束位置（下一个 [section] 或 EOF）。
+	before := text[:loc[0]]
+	afterHeader := text[loc[1]:]
+
+	nextSecRe := regexp.MustCompile(`(?m)^\s*\[`)
+	nextLoc := nextSecRe.FindStringIndex(afterHeader)
+
+	if nextLoc == nil {
+		return before + fullSection
+	}
+	return before + fullSection + "\n" + afterHeader[nextLoc[0]:]
+}
+
+// removeTomlSection 从 TOML 文本中移除一个 [section] 块。
+func removeTomlSection(text, sectionName string) string {
+	headerPat := `(?m)^\[` + regexp.QuoteMeta(sectionName) + `\]\s*\n?`
+	headerRe := regexp.MustCompile(headerPat)
+
+	loc := headerRe.FindStringIndex(text)
+	if loc == nil {
+		return text
+	}
+
+	before := text[:loc[0]]
+	afterHeader := text[loc[1]:]
+
+	nextSecRe := regexp.MustCompile(`(?m)^\s*\[`)
+	nextLoc := nextSecRe.FindStringIndex(afterHeader)
+
+	var result string
+	if nextLoc == nil {
+		result = strings.TrimRight(before, "\n")
+	} else {
+		result = before + afterHeader[nextLoc[0]:]
+	}
+
+	return result
+}
+
+// codexProviderSectionBody 返回 [model_providers.<id>] 内的 TOML 键值对。
+func codexProviderSectionBody(port int) string {
+	return fmt.Sprintf(`name = "QCCG"
+base_url = "%s"
+wire_api = "responses"
+`, bridgeBaseURL(port)+codexProviderURL)
 }
 
 func writeCodexConfig(home string, port int, token, model string) error {
@@ -596,96 +746,147 @@ func writeCodexConfig(home string, port int, token, model string) error {
 	}
 	tomlPath := filepath.Join(dir, "config.toml")
 
-	// 读取原 config.toml（不存在则空）
-	var doc map[string]interface{}
+	// 读取现有 config.toml 原始文本（保留注释、格式、其它 section）。
+	origText := ""
 	if data, err := os.ReadFile(tomlPath); err == nil {
-		if err := toml.Unmarshal(data, &doc); err != nil {
-			return fmt.Errorf("parse %s: %w", tomlPath, err)
-		}
-	}
-	if doc == nil {
-		doc = map[string]interface{}{}
+		origText = string(data)
 	}
 
-	doc["model_provider"] = qoderProviderID
+	// 确定稳定的 provider ID（优先级：自定义 ID > "qccg"）。
+	providerID := determineCodexProviderID(origText)
+
+	// 字符串级编辑：只改目标字段，其余原文一字不动。
+	newText := origText
+	newText = setTomlTopLevelKey(newText, "model_provider",
+		fmt.Sprintf("model_provider = %q", providerID))
 	if model != "" {
-		doc["model"] = model
+		newText = setTomlTopLevelKey(newText, "model",
+			fmt.Sprintf("model = %q", model))
 	}
-	providers, _ := doc["model_providers"].(map[string]interface{})
-	if providers == nil {
-		providers = map[string]interface{}{}
-	}
-	providers[qoderProviderID] = codexProviderTable(port)
-	doc["model_providers"] = providers
+	newText = upsertTomlSection(newText,
+		fmt.Sprintf("model_providers.%s", providerID),
+		codexProviderSectionBody(port))
 
-	out, err := toml.Marshal(doc)
-	if err != nil {
-		return fmt.Errorf("marshal toml: %w", err)
+	// 语法校验（确保编辑后的 TOML 合法）。
+	var tmp map[string]interface{}
+	if err := toml.Unmarshal([]byte(newText), &tmp); err != nil {
+		return fmt.Errorf("invalid TOML after edit: %w", err)
 	}
-	if err := atomicWriteFile(tomlPath, out, 0o644); err != nil {
+
+	// 读取现有 auth.json 用于回滚。
+	authPath := filepath.Join(dir, "auth.json")
+	oldAuthExists := false
+	var oldAuth []byte
+	if data, err := os.ReadFile(authPath); err == nil {
+		oldAuth = data
+		oldAuthExists = true
+	}
+
+	// 第一阶段：写 auth.json。
+	auth, err := readJSONObjectOrEmpty(authPath)
+	if err != nil {
 		return err
 	}
-
-	// 同步写 auth.json
-	authPath := filepath.Join(dir, "auth.json")
-	auth, _ := readJSONObjectOrEmpty(authPath)
 	auth["OPENAI_API_KEY"] = token
 	if err := writeJSONObjectOrdered(authPath, auth); err != nil {
 		return err
 	}
 
-	logger.Info("Wrote Codex config: %s (model=%s)", tomlPath, model)
+	// 第二阶段：写 config.toml（失败则回滚 auth.json）。
+	if err := atomicWriteFile(tomlPath, []byte(newText), 0o644); err != nil {
+		if oldAuthExists {
+			_ = atomicWriteFile(authPath, oldAuth, 0o644)
+		} else {
+			_ = os.Remove(authPath)
+		}
+		return fmt.Errorf("write config.toml failed (auth rolled back): %w", err)
+	}
+
+	logger.Info("Wrote Codex config: %s (model=%s, provider=%s)", tomlPath, model, providerID)
 	return nil
+}
+
+// cleanupCodexAuth removes QCCG's OPENAI_API_KEY from auth.json.
+func cleanupCodexAuth(dir string) {
+	authPath := filepath.Join(dir, "auth.json")
+	auth, err := readJSONObjectOrEmpty(authPath)
+	if err != nil {
+		return
+	}
+	if v, ok := auth["OPENAI_API_KEY"].(string); ok && v == defaultQoderAPIKey {
+		delete(auth, "OPENAI_API_KEY")
+	}
+	if len(auth) == 0 {
+		_ = os.Remove(authPath)
+	} else {
+		_ = writeJSONObjectOrdered(authPath, auth)
+	}
 }
 
 func removeCodexConfig(home string) error {
 	dir := filepath.Join(home, ".codex")
 	tomlPath := filepath.Join(dir, "config.toml")
 
-	var doc map[string]interface{}
-	if data, err := os.ReadFile(tomlPath); err == nil {
-		if err := toml.Unmarshal(data, &doc); err != nil {
-			return fmt.Errorf("parse %s: %w", tomlPath, err)
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			cleanupCodexAuth(dir)
+			logger.Info("Cleaned qccg fields from Codex config")
+			return nil
 		}
+		return err
 	}
-	if doc != nil {
-		if v, ok := doc["model_provider"].(string); ok && v == qoderProviderID {
-			delete(doc, "model_provider")
-			delete(doc, "model")
-		}
+
+	text := string(data)
+
+	// 解析以判断我们写了哪个 provider ID。
+	var doc map[string]interface{}
+	if err := toml.Unmarshal(data, &doc); err != nil {
+		// 无法解析 → 不碰文件，只清理 auth（以防万一）
+		cleanupCodexAuth(dir)
+		logger.Info("Cleaned qccg fields from Codex config")
+		return nil
+	}
+
+	mp, _ := doc["model_provider"].(string)
+	mp = strings.TrimSpace(mp)
+
+	providerID := ""
+	if mp == qoderProviderID {
+		providerID = qoderProviderID
+	} else if mp != "" && !isReservedCodexProviderID(mp) {
+		// 检查 provider table 是否有 QCCG 签名（name = "QCCG"）。
 		if providers, ok := doc["model_providers"].(map[string]interface{}); ok {
-			delete(providers, qoderProviderID)
-			if len(providers) == 0 {
-				delete(doc, "model_providers")
-			} else {
-				doc["model_providers"] = providers
-			}
-		}
-		if len(doc) == 0 {
-			_ = os.Remove(tomlPath)
-		} else {
-			out, err := toml.Marshal(doc)
-			if err != nil {
-				return err
-			}
-			if err := atomicWriteFile(tomlPath, out, 0o644); err != nil {
-				return err
+			if table, ok := providers[mp].(map[string]interface{}); ok {
+				if name, ok := table["name"].(string); ok && name == "QCCG" {
+					providerID = mp
+				}
 			}
 		}
 	}
 
-	// auth.json: 只移除我们写的 OPENAI_API_KEY=qccg
-	authPath := filepath.Join(dir, "auth.json")
-	if auth, err := readJSONObjectOrEmpty(authPath); err == nil {
-		if v, ok := auth["OPENAI_API_KEY"].(string); ok && v == defaultQoderAPIKey {
-			delete(auth, "OPENAI_API_KEY")
-		}
-		if len(auth) == 0 {
-			_ = os.Remove(authPath)
-		} else {
-			_ = writeJSONObjectOrdered(authPath, auth)
+	if providerID == "" {
+		logger.Info("Codex config not managed by qccg, skipping removal")
+		cleanupCodexAuth(dir)
+		return nil
+	}
+
+	// 字符串级编辑：移除我们写入的字段。
+	newText := text
+	newText = removeTomlTopLevelKey(newText, "model_provider")
+	newText = removeTomlTopLevelKey(newText, "model")
+	newText = removeTomlSection(newText, fmt.Sprintf("model_providers.%s", providerID))
+	newText = strings.TrimSpace(newText)
+
+	if newText == "" {
+		_ = os.Remove(tomlPath)
+	} else {
+		if err := atomicWriteFile(tomlPath, []byte(newText+"\n"), 0o644); err != nil {
+			return err
 		}
 	}
+
+	cleanupCodexAuth(dir)
 	logger.Info("Cleaned qccg fields from Codex config")
 	return nil
 }
