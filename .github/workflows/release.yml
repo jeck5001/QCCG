@@ -245,7 +245,5 @@ jobs:
           files: |
             artifacts/**/*.dmg
             artifacts/**/*.tar.gz
-            artifacts/**/qccg
-            artifacts/**/qccg.app/**
           generate_release_notes: true
           fail_on_unmatched_files: false
