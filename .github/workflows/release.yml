@@ -1,8 +1,5 @@
 name: Build and Release
 
-# Touched after repo rename (qoder2API -> QCCG) to force GitHub Actions
-# to re-parse this workflow's metadata.
-
 on:
   push:
     tags:
@@ -24,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is_latest: ${{ steps.check.outputs.is_latest }}
+      is_alpha: ${{ steps.check.outputs.is_alpha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +30,18 @@ jobs:
       - name: Check if this tag is the latest
         id: check
         run: |
+          # is_alpha: workflow_dispatch 时根据 inputs.version 判定，push tag 时根据 ref_name 判定
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER="${{ github.ref_name }}"
+          fi
+          if echo "$VER" | grep -qE '(alpha|beta|rc)'; then
+            echo "is_alpha=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_alpha=false" >> $GITHUB_OUTPUT
+          fi
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "is_latest=true" >> $GITHUB_OUTPUT
             exit 0
@@ -220,7 +230,7 @@ jobs:
 
   build-linux:
     needs: check-latest
-    if: needs.check-latest.outputs.is_latest == 'true' && !contains(env.VERSION, 'alpha')
+    if: needs.check-latest.outputs.is_latest == 'true' && needs.check-latest.outputs.is_alpha != 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
