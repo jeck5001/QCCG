@@ -4,7 +4,7 @@
 [![Go](https://img.shields.io/badge/Go-1.25-blue)](https://go.dev)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
-将 [Qoder](https://qoder.ai) 账号转换为本地 OpenAI / Claude / Codex 兼容 API，供 Cursor、ChatGPT 等客户端直接使用。
+将 [Qoder](https://qoder.ai) 账号转换为本地 OpenAI / Claude / Codex 兼容 API，供Claude Code、 Cursor、ChatGPT 等客户端直接使用。
 
 ## 功能
 
