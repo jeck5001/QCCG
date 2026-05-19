@@ -1,0 +1,39 @@
+# Wails v3 project configuration
+version: '3'
+
+info:
+  companyName: "QCCG"
+  productName: "QCCG"
+  productIdentifier: "com.qccg.app"
+  description: "QCCG: Qoder Claude Codex Gemini Gateway"
+  copyright: "Copyright © 2026"
+  comments: "Multi-account AI gateway with bridge service"
+  version: "1.0.0"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+      - "*_test.go"
+    watched_extension:
+      - "*.go"
+      - "*.js"
+      - "*.ts"
+    git_ignore: true
+  executes:
+    - cmd: wails3 build
+      type: blocking
+    - cmd: cd frontend && npm run dev
+      type: background
+    - cmd: ./build/bin/qccg
+      type: primary

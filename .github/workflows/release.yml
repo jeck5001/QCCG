@@ -14,6 +14,7 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+  WAILS_VERSION: v3.0.0-alpha.93
 
 jobs:
   check-latest:
@@ -66,29 +67,78 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: Install Wails v3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
       
-      - name: Verify Wails installation
-        run: wails version
+      - name: Verify Wails v3 installation
+        run: wails3 version
       
       - name: Install frontend dependencies
         run: cd frontend && npm ci
       
+      - name: Generate Wails v3 bindings
+        run: wails3 generate bindings -ts -names -d frontend/bindings ./...
+      
+      - name: Build frontend
+        run: cd frontend && npm run build
+      
       - name: Build macOS app
         run: |
-          wails build \
-            -platform darwin/${{ matrix.arch }} \
-            -ldflags "-X main.Version=${{ env.VERSION }}" \
-            -o qccg
+          mkdir -p build/bin
+          go build \
+            -tags production \
+            -trimpath \
+            -ldflags="-w -s -X main.Version=${{ env.VERSION }}" \
+            -o build/bin/qccg
         env:
           CGO_ENABLED: 1
+          GOARCH: ${{ matrix.arch }}
       
       - name: Verify build output
         run: |
           ls -lh build/bin/
-          file build/bin/qccg || true
-          file build/bin/qccg.app/Contents/MacOS/qccg || true
+          file build/bin/qccg
+      
+      - name: Create macOS .app bundle
+        run: |
+          APP_DIR="build/bin/qccg.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
+          cp build/bin/qccg "$APP_DIR/MacOS/"
+          cp build/appicon.png "$APP_DIR/Resources/"
+          if [ -f build/darwin/icons.icns ]; then
+            cp build/darwin/icons.icns "$APP_DIR/Resources/"
+          fi
+          # Create minimal Info.plist
+          cat > "$APP_DIR/Info.plist" << 'PLISTEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>qccg</string>
+            <key>CFBundleIconFile</key>
+            <string>appicon</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.qccg.app</string>
+            <key>CFBundleName</key>
+            <string>QCCG</string>
+            <key>CFBundleDisplayName</key>
+            <string>QCCG</string>
+            <key>CFBundleVersion</key>
+            <string>${{ env.VERSION }}</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${{ env.VERSION }}</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLISTEOF
       
       - name: Create DMG
         run: |
@@ -145,11 +195,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: Install Wails v3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
       
-      - name: Verify Wails installation
-        run: wails version
+      - name: Verify Wails v3 installation
+        run: wails3 version
       
       - name: Install frontend dependencies
         run: cd frontend && npm ci
@@ -159,14 +209,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
       
+      - name: Generate Wails v3 bindings
+        run: wails3 generate bindings -ts -names -d frontend/bindings ./...
+      
+      - name: Build frontend
+        run: cd frontend && npm run build
+      
       - name: Build Linux app
         run: |
-          wails build \
-            -platform linux/amd64 \
-            -ldflags "-X main.Version=${{ env.VERSION }}" \
-            -o qccg
+          mkdir -p build/bin
+          go build \
+            -tags production \
+            -trimpath \
+            -ldflags="-w -s -X main.Version=${{ env.VERSION }}" \
+            -o build/bin/qccg
         env:
           CGO_ENABLED: 1
+          GOOS: linux
+          GOARCH: amd64
       
       - name: Verify build output
         run: |
@@ -229,7 +289,7 @@ jobs:
             ### Features
             - Multi-account management with PAT and OAuth authentication
             - Bridge service for OpenAI, Claude, Codex, and Gemini APIs
-            - macOS desktop app built with Wails framework
+            - macOS desktop app built with Wails v3 framework
             - Model mapping and configuration management
             - Real-time account switching and bridge control
             - System tray integration

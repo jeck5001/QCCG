@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { GetSettings, SaveSettings, CleanupAllData, Confirm } from '../../wailsjs/go/main/App'
-import { account } from '../../wailsjs/go/models'
+import { GetSettings, SaveSettings, CleanupAllData, Confirm } from '../../bindings/qccg/app'
+import * as account from '../../bindings/qccg/account'
 
 function generateToken(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'

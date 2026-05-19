@@ -12,8 +12,9 @@ import {
   SaveSettings,
   HasClientConfigBackup,
   RestoreClientConfigFile,
-} from '../../wailsjs/go/main/App'
-import { account, main } from '../../wailsjs/go/models'
+} from '../../bindings/qccg/app'
+import * as account from '../../bindings/qccg/account'
+import * as main from '../../bindings/qccg/models'
 import claudeIcon from '../icons/clients/claude.svg'
 import openaiIcon from '../icons/clients/openai.svg'
 import geminiIcon from '../icons/clients/gemini.svg'
