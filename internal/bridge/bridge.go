@@ -1,20 +1,18 @@
 package bridge
 
 import (
-	"qccg/internal/cosy"
-	"qccg/internal/common"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"qccg/internal/cosy"
 	"sort"
 	"strings"
 
 	"qccg/account"
 	"qccg/logger"
 )
-
 
 func qoderChatStreamURL() string {
 	return "https://api1.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
@@ -74,6 +72,15 @@ type Bridge struct {
 	sess         *cosy.SessionContext
 	client       *BearerClient
 	templateBase map[string]interface{}
+}
+
+// QoderModel 是返回给前端的精简模型条目（仅保留下拉选择必要字段）
+type QoderModel struct {
+	Key            string `json:"key"`
+	DisplayName    string `json:"display_name"`
+	Enable         bool   `json:"enable"`
+	IsDefault      bool   `json:"is_default"`
+	MaxInputTokens int    `json:"max_input_tokens,omitempty"`
 }
 
 // NewBridge 创建 API 转换桥接。
@@ -141,8 +148,8 @@ func NewBridge(pat string, templateBase map[string]interface{}) (*Bridge, error)
 
 // ListAvailableModels 通过 cosy 签名调用 /algo/api/v2/model/list 拉取上游模型清单。
 // 返回顶层 assistant 数组中 enable=true 的模型，按 is_default desc + display_name asc 排序。
-func (b *Bridge) ListAvailableModels() ([]common.QoderModel, error) {
-	const modelListURL = "https://api2.qoder.sh/algo/api/v2/model/list?Encode=1"
+func (b *Bridge) ListAvailableModels() ([]QoderModel, error) {
+	modelListURL := qoderModelListURL()
 	resp, err := b.client.callGet(modelListURL)
 	if err != nil {
 		return nil, err
@@ -154,9 +161,9 @@ func (b *Bridge) ListAvailableModels() ([]common.QoderModel, error) {
 	return models, nil
 }
 
-func parseQoderModels(resp map[string]interface{}) []common.QoderModel {
+func parseQoderModels(resp map[string]interface{}) []QoderModel {
 	rawList, _ := resp["assistant"].([]interface{})
-	out := make([]common.QoderModel, 0, len(rawList))
+	out := make([]QoderModel, 0, len(rawList))
 	for _, it := range rawList {
 		m, ok := it.(map[string]interface{})
 		if !ok {
@@ -166,7 +173,7 @@ func parseQoderModels(resp map[string]interface{}) []common.QoderModel {
 		if !enable {
 			continue
 		}
-		out = append(out, common.QoderModel{
+		out = append(out, QoderModel{
 			Key:            StrVal(m, "key"),
 			DisplayName:    StrVal(m, "display_name"),
 			Enable:         enable,
