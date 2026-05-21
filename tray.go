@@ -24,6 +24,7 @@ func setupTray(app *application.App, window *application.WebviewWindow, a *App) 
 		} else {
 			window.Show()
 			window.UnMinimise()
+			window.Focus()
 		}
 	})
 
@@ -43,6 +44,7 @@ func buildTrayMenu(app *application.App, window *application.WebviewWindow, a *A
 	m.Add("显示主界面").SetAccelerator("CmdOrCtrl+0").OnClick(func(_ *application.Context) {
 		window.Show()
 		window.UnMinimise()
+		window.Focus()
 	})
 	m.AddSeparator()
 
