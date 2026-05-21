@@ -1,0 +1,6 @@
+changelog:
+  categories:
+    - title: '## 更新内容'
+      labels: ['*']
+  exclude:
+    labels: ['skip-changelog']

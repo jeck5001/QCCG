@@ -272,25 +272,6 @@ jobs:
           name: Release ${{ env.VERSION }}
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease }}
-          body: |
-            ## QCCG ${{ env.VERSION }}
-
-            ### 更新内容
-            - 多账号管理，支持 PAT 和 OAuth 登录
-            - 支持 OpenAI、Claude、Codex、Gemini 多种 API 协议
-            - 基于 Wails v3 的 macOS 原生桌面应用
-            - 模型映射与配置管理
-            - 实时切换账号与 Bridge 控制
-            - 系统托盘集成
-
-            ### 下载
-            - **macOS Intel**：`QCCG-${{ env.VERSION }}-darwin-amd64.dmg`
-            - **macOS Apple Silicon**：`QCCG-${{ env.VERSION }}-darwin-arm64.dmg`
-
-            ### 安装方式
-            1. 下载对应架构的 `.dmg` 文件
-            2. 打开 DMG，将 QCCG 拖入应用程序文件夹
-            3. 首次运行请右键→「打开」，绕过 Gatekeeper 拦截
           files: release-assets/*
           generate_release_notes: true
           fail_on_unmatched_files: false
