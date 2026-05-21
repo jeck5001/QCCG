@@ -22,11 +22,12 @@ import (
 
 // QoderModel 定义在 main 包以确保 Wails 生成 main.QoderModel 绑定。
 type QoderModel struct {
-	Key            string `json:"key"`
-	DisplayName    string `json:"display_name"`
-	Enable         bool   `json:"enable"`
-	IsDefault      bool   `json:"is_default"`
-	MaxInputTokens int    `json:"max_input_tokens,omitempty"`
+	Key            string  `json:"key"`
+	DisplayName    string  `json:"display_name"`
+	Enable         bool    `json:"enable"`
+	IsDefault      bool    `json:"is_default"`
+	MaxInputTokens int     `json:"max_input_tokens,omitempty"`
+	PriceFactor    float64 `json:"price_factor,omitempty"`
 }
 
 // App 持有 Wails v3 的 app 和 window 引用，替代 v2 的 ctx。
@@ -445,6 +446,7 @@ func (a *App) ListQoderModels() ([]QoderModel, error) {
 			Enable:         m.Enable,
 			IsDefault:      m.IsDefault,
 			MaxInputTokens: m.MaxInputTokens,
+			PriceFactor:    m.PriceFactor,
 		}
 	}
 	return out, nil

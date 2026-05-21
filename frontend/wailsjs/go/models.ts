@@ -315,11 +315,12 @@ export namespace main {
 	    enable: boolean;
 	    is_default: boolean;
 	    max_input_tokens?: number;
-	
+	    price_factor?: number;
+
 	    static createFrom(source: any = {}) {
 	        return new QoderModel(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
@@ -327,6 +328,7 @@ export namespace main {
 	        this.enable = source["enable"];
 	        this.is_default = source["is_default"];
 	        this.max_input_tokens = source["max_input_tokens"];
+	        this.price_factor = source["price_factor"];
 	    }
 	}
 

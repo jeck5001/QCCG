@@ -76,11 +76,12 @@ type Bridge struct {
 
 // QoderModel 是返回给前端的精简模型条目（仅保留下拉选择必要字段）
 type QoderModel struct {
-	Key            string `json:"key"`
-	DisplayName    string `json:"display_name"`
-	Enable         bool   `json:"enable"`
-	IsDefault      bool   `json:"is_default"`
-	MaxInputTokens int    `json:"max_input_tokens,omitempty"`
+	Key            string  `json:"key"`
+	DisplayName    string  `json:"display_name"`
+	Enable         bool    `json:"enable"`
+	IsDefault      bool    `json:"is_default"`
+	MaxInputTokens int     `json:"max_input_tokens,omitempty"`
+	PriceFactor    float64 `json:"price_factor,omitempty"`
 }
 
 // NewBridge 创建 API 转换桥接。
@@ -179,6 +180,7 @@ func parseQoderModels(resp map[string]interface{}) []QoderModel {
 			Enable:         enable,
 			IsDefault:      func() bool { v, _ := m["is_default"].(bool); return v }(),
 			MaxInputTokens: int(cosy.FloatVal(m, "max_input_tokens")),
+			PriceFactor:    cosy.FloatVal(m, "price_factor"),
 		})
 	}
 	return out

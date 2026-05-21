@@ -115,6 +115,7 @@ export class QoderModel {
     "enable": boolean;
     "is_default": boolean;
     "max_input_tokens"?: number;
+    "price_factor"?: number;
 
     /** Creates a new QoderModel instance. */
     constructor($$source: Partial<QoderModel> = {}) {

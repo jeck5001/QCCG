@@ -780,7 +780,10 @@ function ModelMappingSection({ agent, qoderModels, initialMappings, modelsLoadin
                 onChange={v => updateRow(r.id, 'to', v)}
                 options={qoderModels.length > 0
                   ? [
-                      ...qoderModels.map(m => ({ value: m.key, label: `${m.display_name} (${m.key})${m.is_default ? ' · 默认' : ''}` })),
+                      ...qoderModels.map(m => ({
+                        value: m.key,
+                        label: `${m.display_name} (${m.key})${m.price_factor != null ? ` ×${m.price_factor}` : ''}${m.is_default ? ' · 默认' : ''}`
+                      })),
                       ...(r.to && !qoderModels.some(m => m.key === r.to) ? [{ value: r.to, label: `${r.to}（自定义/已下线）` }] : [])
                     ]
                   : FALLBACK_QODER_KEYS.map(k => ({ value: k, label: k }))
