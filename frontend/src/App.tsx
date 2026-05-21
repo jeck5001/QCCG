@@ -91,7 +91,7 @@ export default function App() {
               onClick={handleCheckUpdate}
               title="点击检查更新"
             >
-              {upToDate ? '✓ 已是最新' : `v${version}`}
+              {upToDate ? '✓ 已是最新' : version}
             </span>
           )}
           {updateInfo && (

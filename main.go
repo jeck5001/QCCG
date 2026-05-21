@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"qccg/logger"
 )
@@ -48,6 +49,13 @@ func main() {
 			Appearance: application.NSAppearanceNameVibrantLight,
 			Backdrop:   application.MacBackdropTranslucent,
 		},
+	})
+
+	// 点关闭按鈕时隐藏窗口而不销毁，保持托盘可唤起
+	// 用 RegisterHook 拦截 Mac.WindowShouldClose，在事件传播到内置销毁 handler 之前 Cancel 并 Hide
+	mainWindow.RegisterHook(events.Mac.WindowShouldClose, func(event *application.WindowEvent) {
+		event.Cancel()
+		mainWindow.Hide()
 	})
 
 	// 绑定 app 和 window 引用
