@@ -237,6 +237,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -265,15 +268,61 @@ jobs:
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          # 找到当前 tag 的前一个 tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || true)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "Generating changelog: ${PREV_TAG}..${VERSION}"
+
+          # 按 conventional commit 前缀分类
+          FEAT=""
+          FIX=""
+          OTHER=""
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then continue; fi
+            if echo "$line" | grep -qiE '^feat(\(|:)'; then
+              FEAT="${FEAT}- ${line}\n"
+            elif echo "$line" | grep -qiE '^fix(\(|:)'; then
+              FIX="${FIX}- ${line}\n"
+            elif echo "$line" | grep -qiE '^(chore|ci|docs|style|refactor|perf|test)(\(|:)'; then
+              OTHER="${OTHER}- ${line}\n"
+            else
+              OTHER="${OTHER}- ${line}\n"
+            fi
+          done <<< "$(git log ${PREV_TAG}..HEAD --pretty=format:'%s' --no-merges)"
+
+          # 组装 body
+          BODY=""
+          if [ -n "$FEAT" ]; then
+            BODY="${BODY}## ✨ 新功能\n${FEAT}\n"
+          fi
+          if [ -n "$FIX" ]; then
+            BODY="${BODY}## 🐛 修复\n${FIX}\n"
+          fi
+          if [ -n "$OTHER" ]; then
+            BODY="${BODY}## 🔧 其他\n${OTHER}\n"
+          fi
+          if [ -z "$BODY" ]; then
+            BODY="暂无更新说明"
+          fi
+
+          # 写入文件避免多行转义问题
+          printf "%b" "$BODY" > /tmp/changelog.md
+          echo "changelog_file=/tmp/changelog.md" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
           name: Release ${{ env.VERSION }}
+          body_path: ${{ steps.changelog.outputs.changelog_file }}
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease }}
           files: release-assets/*
-          generate_release_notes: true
           fail_on_unmatched_files: false
 
       - name: Update Homebrew Cask
