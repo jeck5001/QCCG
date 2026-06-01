@@ -1,9 +1,9 @@
 cask "qccg" do
   arch arm: "arm64", intel: "amd64"
 
-  version "0.6.4"
-  sha256 arm:   "a72f0ca9d0281d04c0a8a27919d1aae100ec45121920a6927ccb228360fc3ddc",
-         intel: "cdb83495050c92168ccac9a7950f1c7853f9f8a4dd51fc4496717bd37a5ad6af"
+  version "0.6.5"
+  sha256 arm:   "57e8fc1269578c336be8b4318a0f310b51acca44cc1c84070a7c48fc82b23bb6",
+         intel: "df7dbf6db3bb4ada6d96a1c9e8913a0a87da99a5435c59b13dc8c2e2b207fb40"
 
   url "https://github.com/wangtufly/QCCG/releases/download/v#{version}/QCCG-v#{version}-darwin-#{arch}.dmg"
   name "QCCG"
