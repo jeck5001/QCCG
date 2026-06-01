@@ -109,6 +109,16 @@ func (a *App) checkUpdateInBackground() {
 	if a.app != nil {
 		a.app.Event.Emit("update-available", info)
 	}
+
+	// 后台静默预下载，用户点更新时直接用缓存
+	go func() {
+		updater.CleanCache()
+		if err := updater.PreDownload(info.DownloadURL); err != nil {
+			logger.Debug("预下载失败（不影响手动更新）: %v", err)
+		} else {
+			logger.Info("预下载完成，用户点击更新将直接安装")
+		}
+	}()
 }
 
 // CheckUpdate 前端调用：手动检查更新。

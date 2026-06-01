@@ -27,20 +27,27 @@ var Version = "0.0.0-dev"
 // Repo 检查更新的 GitHub 仓库 "owner/repo"。
 var Repo = "wangtufly/QCCG"
 
-// defaultMirror 默认镜像域名，可通过 GITHUB_MIRROR 环境变量覆盖。
-// 设为空字符串可禁用镜像，直连 GitHub。
-const defaultMirror = "ghproxy.com"
+// mirrors 多镜像列表，竞速下载时并发尝试。
+// 格式为前缀式：https://{mirror}/{原始完整URL}
+var mirrors = []string{
+	"gh-proxy.com",
+	"ghproxy.net",
+	"github.akams.cn",
+	"cdn.gh-proxy.org",
+}
 
-// mirrorURL 自动替换下载域名为镜像地址。
-func mirrorURL(raw string) string {
-	mirror := os.Getenv("GITHUB_MIRROR")
-	if mirror == "" {
-		mirror = defaultMirror
-	} else if mirror == "-" {
-		// GITHUB_MIRROR=- 表示禁用镜像
-		return raw
+// buildMirrorURLs 生成所有候选下载地址（镜像 + 直连）。
+func buildMirrorURLs(raw string) []string {
+	env := os.Getenv("GITHUB_MIRROR")
+	if env == "-" {
+		return []string{raw}
 	}
-	return strings.Replace(raw, "github.com", mirror, 1)
+	var urls []string
+	for _, m := range mirrors {
+		urls = append(urls, "https://"+m+"/"+raw)
+	}
+	urls = append(urls, raw)
+	return urls
 }
 
 // GitHubRelease 代表 GitHub Releases API 返回的 release 结构。
@@ -140,10 +147,15 @@ func Apply(downloadURL string, onProgress func(pct int)) (bool, error) {
 		return false, fmt.Errorf("无法确定 .app 路径: %s → %s", currentPath, appPath)
 	}
 
-	// 下载到临时目录
-	if onProgress != nil {
-		onProgress(5)
+	// 检查是否有预下载缓存
+	cachedDMG := cachedDMGPath(downloadURL)
+	hasCached := false
+	if cachedDMG != "" {
+		if fi, err := os.Stat(cachedDMG); err == nil && fi.Size() > 0 {
+			hasCached = true
+		}
 	}
+
 	tmpDir, err := os.MkdirTemp("", "qccg-update")
 	if err != nil {
 		return false, fmt.Errorf("创建临时目录失败: %w", err)
@@ -151,8 +163,33 @@ func Apply(downloadURL string, onProgress func(pct int)) (bool, error) {
 	defer os.RemoveAll(tmpDir)
 
 	dmgPath := filepath.Join(tmpDir, "update.dmg")
-	if err := downloadFile(downloadURL, dmgPath, onProgress); err != nil {
-		return false, fmt.Errorf("下载失败: %w", err)
+
+	if hasCached {
+		// 直接用缓存，跳过下载
+		if onProgress != nil {
+			onProgress(5)
+		}
+		if err := os.Link(cachedDMG, dmgPath); err != nil {
+			// 硬链接失败则拷贝
+			data, readErr := os.ReadFile(cachedDMG)
+			if readErr != nil {
+				return false, fmt.Errorf("读取缓存失败: %w", readErr)
+			}
+			if writeErr := os.WriteFile(dmgPath, data, 0644); writeErr != nil {
+				return false, fmt.Errorf("写入 dmg 失败: %w", writeErr)
+			}
+		}
+		if onProgress != nil {
+			onProgress(55)
+		}
+	} else {
+		// 无缓存，正常下载
+		if onProgress != nil {
+			onProgress(5)
+		}
+		if err := downloadFile(downloadURL, dmgPath, onProgress); err != nil {
+			return false, fmt.Errorf("下载失败: %w", err)
+		}
 	}
 
 	if onProgress != nil {
@@ -276,47 +313,65 @@ func fetchLatest() (*GitHubRelease, error) {
 }
 
 func downloadFile(url, dest string, onProgress func(pct int)) error {
-	// 下载大文件，30 分钟超时（覆盖 GitHub 下载慢的场景）
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	client := &http.Client{}
+	urls := buildMirrorURLs(url)
 
-	// 先试镜像，失败则回退直连
-	urls := []string{mirrorURL(url), url}
-	if mirrorURL(url) == url {
-		urls = []string{url} // 没启用镜像，只试直连
+	// 竞速：并发请求所有镜像，第一个成功返回 200 的胜出
+	type result struct {
+		resp *http.Response
+		err  error
 	}
 
-	var lastErr error
+	raceCtx, raceCancel := context.WithCancel(ctx)
+	defer raceCancel()
+
+	ch := make(chan result, len(urls))
 	for _, dlURL := range urls {
-		req, err := http.NewRequestWithContext(ctx, "GET", dlURL, nil)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("下载返回 %d (url=%s)", resp.StatusCode, dlURL)
-			continue
-		}
-
-		// 成功获取响应，开始写文件
-		err = writeResponseBody(resp, dest, onProgress, ctx)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return nil
+		go func(u string) {
+			req, err := http.NewRequestWithContext(raceCtx, "GET", u, nil)
+			if err != nil {
+				ch <- result{nil, err}
+				return
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				ch <- result{nil, err}
+				return
+			}
+			if resp.StatusCode != 200 {
+				resp.Body.Close()
+				ch <- result{nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, u)}
+				return
+			}
+			ch <- result{resp, nil}
+		}(dlURL)
 	}
-	return fmt.Errorf("下载失败（镜像+直连均不可用）: %w", lastErr)
+
+	// 收集结果，取第一个成功的
+	var winner *http.Response
+	var errs []error
+	for range urls {
+		r := <-ch
+		if r.err != nil {
+			errs = append(errs, r.err)
+			continue
+		}
+		if winner == nil {
+			winner = r.resp
+			raceCancel() // 取消其余请求
+		} else {
+			r.resp.Body.Close()
+		}
+	}
+
+	if winner == nil {
+		return fmt.Errorf("所有镜像下载失败: %v", errs)
+	}
+	defer winner.Body.Close()
+
+	return writeResponseBody(winner, dest, onProgress, ctx)
 }
 
 // writeResponseBody 将 HTTP 响应体写入文件，带进度回调。
@@ -444,6 +499,85 @@ open "%s"
 # 清理临时目录并删脚本
 rm -f "$0" && rmdir "%s" 2>/dev/null || true
 `, pid, oldApp, newApp, oldApp, oldApp, oldApp, persistDir)
+}
+
+// -------- 预下载 --------
+
+// cacheDir 返回预下载缓存目录。
+func cacheDir() string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, "Library", "Caches", "QCCG", "updates")
+	os.MkdirAll(dir, 0755)
+	return dir
+}
+
+// cachedDMGPath 根据下载 URL 推导缓存文件路径。
+func cachedDMGPath(downloadURL string) string {
+	if downloadURL == "" {
+		return ""
+	}
+	// 用文件名作为缓存 key
+	parts := strings.Split(downloadURL, "/")
+	name := parts[len(parts)-1]
+	if name == "" {
+		return ""
+	}
+	return filepath.Join(cacheDir(), name)
+}
+
+// PreDownload 静默预下载更新到本地缓存，返回下载结果。
+// 调用方应在后台 goroutine 中调用。
+func PreDownload(downloadURL string) error {
+	if downloadURL == "" {
+		return fmt.Errorf("空下载地址")
+	}
+	dest := cachedDMGPath(downloadURL)
+	if dest == "" {
+		return fmt.Errorf("无法确定缓存路径")
+	}
+	// 已缓存则跳过
+	if fi, err := os.Stat(dest); err == nil && fi.Size() > 0 {
+		return nil
+	}
+	return downloadFile(downloadURL, dest, nil)
+}
+
+// CleanCache 清理过期缓存（保留最新一个）。
+func CleanCache() {
+	dir := cacheDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) <= 1 {
+		return
+	}
+	// 按修改时间排序，保留最新
+	type fileEntry struct {
+		path    string
+		modTime time.Time
+	}
+	var files []fileEntry
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, fileEntry{filepath.Join(dir, e.Name()), info.ModTime()})
+	}
+	if len(files) <= 1 {
+		return
+	}
+	// 找最新的
+	newest := files[0]
+	for _, f := range files[1:] {
+		if f.modTime.After(newest.modTime) {
+			newest = f
+		}
+	}
+	// 删除其余
+	for _, f := range files {
+		if f.path != newest.path {
+			os.Remove(f.path)
+		}
+	}
 }
 
 // zipExtract 保留备用，当前 dmg 方案不使用 zip。
