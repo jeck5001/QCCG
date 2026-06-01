@@ -89,6 +89,14 @@ export default function App() {
           <StatusIndicator />
         </div>
         <div className="topbar-right">
+          {updating && !showUpdateModal && (
+            <div className="topbar-progress" onClick={() => setShowUpdateModal(true)} title="点击查看更新详情">
+              <div className="topbar-progress-bar">
+                <div className="topbar-progress-fill" style={{ width: `${updateProgress}%` }} />
+              </div>
+              <span className="topbar-progress-text">{updateProgress}%</span>
+            </div>
+          )}
           {(version || updateInfo) && (
             <span
               className={`topbar-version${checkingUpdate ? ' topbar-version--checking' : ''}${upToDate ? ' topbar-version--ok' : ''}${updateInfo ? ' topbar-version--update' : ''}`}

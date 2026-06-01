@@ -33,10 +33,22 @@ export default function UpdateModal({ updateInfo, onDismiss, onUpdate, updating,
     <div className="modal-overlay" onClick={forceUpdate ? undefined : onDismiss}>
       <div className="modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
         <div style={{ marginBottom: 20 }}>
-          <h3 style={{ margin: 0 }}>
-            {forceUpdate && <span style={{ color: '#ef4444', marginRight: 6 }}>⚠</span>}
-            发现新版本 {updateInfo.latest}
-          </h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <h3 style={{ margin: 0 }}>
+              {forceUpdate && <span style={{ color: '#ef4444', marginRight: 6 }}>⚠</span>}
+              发现新版本 {updateInfo.latest}
+            </h3>
+            {!forceUpdate && (
+              <button
+                onClick={onDismiss}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  padding: 4, lineHeight: 1, fontSize: 18, color: 'var(--text-secondary)',
+                }}
+                title="最小化到右上角"
+              >✕</button>
+            )}
+          </div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
             当前版本：{updateInfo.current}
             {forceUpdate && <span style={{ color: '#ef4444', marginLeft: 8, fontWeight: 500 }}>此版本为强制更新</span>}

@@ -60,15 +60,10 @@ jobs:
             echo "is_latest=false" >> $GITHUB_OUTPUT
           fi
 
-  build-macos:
+  prepare-frontend:
     needs: check-latest
     if: needs.check-latest.outputs.is_latest == 'true'
     runs-on: macos-latest
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-      fail-fast: false
-
     steps:
       - uses: actions/checkout@v4
 
@@ -86,31 +81,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Detect Wails version from go.mod
-        id: wails
-        run: |
-          if grep -q 'wailsapp/wails/v3' go.mod; then
-            echo "version=v3" >> $GITHUB_OUTPUT
-            echo "wails_version=${{ env.WAILS_VERSION }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=v2" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install Wails v3 CLI
-        if: steps.wails.outputs.version == 'v3'
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
-
-      - name: Install Wails v2 CLI
-        if: steps.wails.outputs.version == 'v2'
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Verify Wails installation
-        run: |
-          if [ "${{ steps.wails.outputs.version }}" = "v3" ]; then
-            wails3 version
-          else
-            wails version
-          fi
 
       - name: Download Go modules (with retry)
         run: |
@@ -126,27 +98,55 @@ jobs:
       - name: Install frontend dependencies
         run: cd frontend && npm ci
 
-      - name: Generate Wails bindings
+      - name: Generate bindings and build frontend
         run: |
-          if [ "${{ steps.wails.outputs.version }}" = "v3" ]; then
-            wails3 generate bindings -ts -names -d frontend/bindings ./...
-            cd frontend && npm run build
-          else
-            cd frontend && npm run build
-          fi
+          wails3 generate bindings -ts -names -d frontend/bindings ./...
+          cd frontend && npm run build
 
-      - name: Build macOS app (Wails v2)
-        if: steps.wails.outputs.version == 'v2'
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 1
+
+  build-macos:
+    needs: [check-latest, prepare-frontend]
+    if: needs.check-latest.outputs.is_latest == 'true'
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+          check-latest: true
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+      - name: Download Go modules (with retry)
         run: |
-          wails build \
-            -platform darwin/${{ matrix.arch }} \
-            -ldflags "-X qccg/internal/updater.Version=${{ env.VERSION }}" \
-            -o qccg
+          for i in 1 2 3; do
+            go mod download && break
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
         env:
-          CGO_ENABLED: 1
+          GOPROXY: https://proxy.golang.org,direct
+          GONOSUMCHECK: github.com/cloudflare/circl
 
-      - name: Build macOS app (Wails v3)
-        if: steps.wails.outputs.version == 'v3'
+      - name: Build macOS app
         run: |
           mkdir -p build/bin
           go build \
@@ -163,8 +163,7 @@ jobs:
           ls -lh build/bin/
           file build/bin/qccg
 
-      - name: Create macOS .app bundle (Wails v3 only)
-        if: steps.wails.outputs.version == 'v3'
+      - name: Create macOS .app bundle
         run: |
           APP_DIR="build/bin/qccg.app/Contents"
           mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
