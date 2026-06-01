@@ -288,17 +288,15 @@ func FetchQuota(token string, region Region) (*QuotaInfo, error) {
 	info := &QuotaInfo{
 		Plan:            fetchPlan(token, ep),
 		IsQuotaExceeded: result["isQuotaExceeded"] == true,
+		ExpiresAt:       int64(toFloat(result, "expiresAt")),
 	}
 
 	if uq := extractBucket(result, "userQuota"); uq != nil {
 		info.UserQuota = uq
 	}
-	if aq := extractBucket(result, "addOnQuota"); aq == nil {
-		if aq2 := extractBucket(result, "addonQuota"); aq2 != nil {
-			info.AddonQuota = aq2
-		}
-	} else {
-		info.AddonQuota = aq
+
+	if org := extractBucket(result, "orgResourcePackage"); org != nil {
+		info.OrgResourcePackage = org
 	}
 
 	return info, nil
@@ -311,9 +309,18 @@ func extractBucket(data map[string]interface{}, key string) *QuotaBucket {
 	}
 	used := toFloat(obj, "used")
 	total := toFloat(obj, "total")
+	if total == 0 {
+		total = toFloat(obj, "cap") // orgResourcePackage 用 cap 而非 total
+	}
 	remaining := toFloat(obj, "remaining")
 	if total == 0 && used == 0 && remaining == 0 {
 		return nil
+	}
+	// orgResourcePackage 需要 available==true
+	if avail, ok := obj["available"]; ok {
+		if b, _ := avail.(bool); !b {
+			return nil
+		}
 	}
 	resetTime := ""
 	if v, ok := obj["resetTime"].(string); ok {

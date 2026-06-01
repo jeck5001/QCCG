@@ -23,8 +23,9 @@ interface QuotaBucket {
 interface QuotaInfo {
   plan: string
   user_quota?: QuotaBucket
-  addon_quota?: QuotaBucket
+  org_resource_package?: QuotaBucket
   is_quota_exceeded?: boolean
+  expires_at?: number
 }
 
 interface Props {
@@ -61,6 +62,22 @@ function formatResetTime(ts: string | undefined): string {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
 }
 
+function countdown(expiresAtMs: number): { text: string; color: string } {
+  const remaining = expiresAtMs - Date.now()
+  const days = remaining / 86400000
+  const d = Math.floor(days)
+  const h = Math.floor((remaining % 86400000) / 3600000)
+  const m = Math.floor((remaining % 3600000) / 60000)
+  if (days > 365) return { text: '无限', color: 'var(--text-muted)' }
+  if (remaining <= 0) return { text: '已到期', color: 'var(--danger)' }
+  const text = `${d}d ${h}h ${m}m`
+
+  // 渐变：30d muted → 7d warning → 1d danger
+  const t = Math.max(0, Math.min(1, (30 - days) / 29))
+  if (t < 0.5) return { text, color: `color-mix(in srgb, var(--text-muted) ${100 - t * 200}%, var(--warning) ${t * 200}%)` }
+  return { text, color: `color-mix(in srgb, var(--warning) ${200 - t * 200}%, var(--danger) ${t * 200 - 100}%)` }
+}
+
 export default function AccountCard({ account: acct, onActivate, onDelete, refreshInterval = 300 }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: acct.id })
   const dragStyle = {
@@ -73,6 +90,7 @@ export default function AccountCard({ account: acct, onActivate, onDelete, refre
   const [quotaError, setQuotaError] = useState(false)
   const [fetchedAt, setFetchedAt] = useState<number | undefined>()
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchQuota = () => {
     GetAccountQuota(acct.id)
@@ -92,6 +110,18 @@ export default function AccountCard({ account: acct, onActivate, onDelete, refre
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [acct.id, refreshInterval])
+
+  // 到期倒计时，每分钟刷新
+  const [remaining, setRemaining] = useState<{ text: string; color: string } | null>(null)
+  useEffect(() => {
+    const tick = () => {
+      if (!quota?.expires_at) { setRemaining(null); return }
+      setRemaining(countdown(quota.expires_at))
+    }
+    tick()
+    countdownRef.current = setInterval(tick, 60000)
+    return () => { if (countdownRef.current) clearInterval(countdownRef.current) }
+  }, [quota?.expires_at])
 
   const plan = quota?.plan
   const displayName = acct.name || acct.email || acct.id
@@ -117,9 +147,8 @@ export default function AccountCard({ account: acct, onActivate, onDelete, refre
 
       {/* 配额区块 */}
       <div className="ac-quota-section">
-        <QuotaRow label="套餐内 Credits" bucket={quota?.user_quota} />
-        <QuotaRow label="附加 Credits" bucket={quota?.addon_quota} />
-        <SharedRow value={0} />
+        <QuotaRow label="套餐内 Credits" countdown={remaining} bucket={quota?.user_quota} />
+        <QuotaRow label="共享资源包" countdown={remaining} bucket={quota?.org_resource_package} />
         {resetTime && (
           <div className="ac-reset-time">订阅重置：{formatResetTime(resetTime)}</div>
         )}
@@ -148,7 +177,7 @@ export default function AccountCard({ account: acct, onActivate, onDelete, refre
   )
 }
 
-function QuotaRow({ label, bucket }: { label: string; bucket?: QuotaBucket }) {
+function QuotaRow({ label, countdown, bucket }: { label: string; countdown?: { text: string; color: string } | null; bucket?: QuotaBucket }) {
   const used = bucket?.used ?? 0
   const total = bucket?.total ?? 0
   const usedPct = total > 0 ? Math.round((used / total) * 100) : 0
@@ -156,7 +185,10 @@ function QuotaRow({ label, bucket }: { label: string; bucket?: QuotaBucket }) {
 
   return (
     <div className="ac-quota-row">
-      <div className="ac-quota-label">{label}</div>
+      <div className="ac-quota-head">
+        <span className="ac-quota-label">{label}</span>
+        {countdown && <span className="ac-countdown" style={{ color: countdown.color }}>{countdown.text}</span>}
+      </div>
       <div className="ac-quota-bar-bg">
         <div className="ac-quota-bar-fill" style={{ width: `${usedPct}%`, background: color }} />
       </div>

@@ -57,7 +57,7 @@ func ExchangeJobToken(token, machineId, machineToken, machineType string, jobTok
 	req.Header.Set("appcode", AppCode)
 	req.Header.Set("accept", "application/json")
 	req.Header.Set("accept-encoding", "identity")
-	req.Header.Set("cosy-version", "0.1.43")
+	req.Header.Set("cosy-version", Version)
 	req.Header.Set("cosy-clienttype", "5")
 	req.Header.Set("date", date)
 	req.Header.Set("signature", sig)

@@ -112,6 +112,17 @@ jobs:
             wails version
           fi
 
+      - name: Download Go modules (with retry)
+        run: |
+          for i in 1 2 3; do
+            go mod download && break
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+          GONOSUMCHECK: github.com/cloudflare/circl
+
       - name: Install frontend dependencies
         run: cd frontend && npm ci
 
