@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+
+# macOS
+.DS_Store
+
+# Build artifacts (rebuilt inside Docker)
+build/bin/
+frontend/dist/
+frontend/node_modules/
+
+# macOS release artifacts
+*.dmg
+*.app
+
+# CI (not needed for build)
+.github/
+
+# Docker files (not needed inside build)
+Dockerfile
+docker-compose.yml
+.dockerignore
+.env
+.env.example
+
+# Local data
+.qccg/

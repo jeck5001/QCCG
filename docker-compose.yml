@@ -1,0 +1,34 @@
+services:
+  qccg-bridge:
+    image: ghcr.io/wangtufly/qccg:latest
+    container_name: qccg-bridge
+    restart: unless-stopped
+    ports:
+      - "8963:8963"
+    environment:
+      # Required: your Qoder PAT token
+      - QODER_PAT=${QODER_PAT}
+      # Region: "global" or "cn"
+      - QCCG_REGION=${QCCG_REGION:-global}
+      # Bridge port (must match ports mapping)
+      - QCCG_PORT=8963
+      # Auth token for bridge access (default: "qccg")
+      # Set a custom token to restrict access
+      - QCCG_BRIDGE_TOKEN=${QCCG_BRIDGE_TOKEN:-qccg}
+      # Listen address (0.0.0.0 for all interfaces inside container)
+      - QCCG_LISTEN=0.0.0.0
+      # Log level: "info", "debug", or "error"
+      - QCCG_LOG_LEVEL=${QCCG_LOG_LEVEL:-info}
+    volumes:
+      # Persist data (accounts, settings, logs, secrets)
+      - qccg-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8963/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  qccg-data:
+    name: qccg-data

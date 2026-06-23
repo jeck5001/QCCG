@@ -37,3 +37,6 @@ docs/
 # 工具目录
 cmd/
 
+# Docker / Docker Compose
+.env
+
