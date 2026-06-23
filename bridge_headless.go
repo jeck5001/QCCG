@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,12 +35,6 @@ import (
 //	QCCG_DATA_DIR      - Data directory (default: ~/.qccg, mount volume in Docker)
 
 func main() {
-	pat := os.Getenv("QODER_PAT")
-	if pat == "" {
-		fmt.Fprintln(os.Stderr, "QODER_PAT environment variable is required")
-		os.Exit(1)
-	}
-
 	region := account.NormalizeRegion(os.Getenv("QCCG_REGION"))
 	port := envInt("QCCG_PORT", 8963)
 	bridgeToken := envOrDefault("QCCG_BRIDGE_TOKEN", "qccg")
@@ -71,19 +66,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	b, err := bridge.NewBridge(pat, region, templateBase)
+	pat, err := resolveHeadlessToken(context.Background())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create bridge: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to resolve bridge token: %v\n", err)
 		os.Exit(1)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/chat/completions", authMiddleware(bridgeToken, b.HandleChatCompletions))
-	mux.HandleFunc("/v1/messages", authMiddleware(bridgeToken, b.HandleClaudeMessages))
-	mux.HandleFunc("/v1/models", authMiddleware(bridgeToken, b.HandleListModels))
-	mux.HandleFunc("/v1/responses", authMiddleware(bridgeToken, b.HandleCodexResponses))
-	mux.HandleFunc("/health", healthHandler(port, region))
-
+	mux := newHeadlessMux(pat, region, templateBase, nil, port, bridgeToken)
 	handler := loggingMiddleware(mux)
 
 	addr := fmt.Sprintf("%s:%d", listenAddr, port)
@@ -118,6 +107,70 @@ func main() {
 
 	logger.Info("Bridge stopped")
 	logger.Close()
+}
+
+func resolveHeadlessToken(ctx context.Context) (string, error) {
+	if pat := os.Getenv("QODER_PAT"); pat != "" {
+		return pat, nil
+	}
+	acct, err := account.GetActive()
+	if err != nil || acct == nil {
+		return "", err
+	}
+	return account.GetSecret(acct.ID)
+}
+
+func newHeadlessMux(
+	pat string,
+	region account.Region,
+	templateBase map[string]interface{},
+	b *bridge.Bridge,
+	port int,
+	bridgeToken string,
+) *http.ServeMux {
+	if b == nil && pat != "" {
+		if created, err := bridge.NewBridge(pat, region, templateBase); err == nil {
+			b = created
+			headlessBridge = created
+		} else {
+			logger.Error("Failed to create bridge: %v", err)
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/chat/completions", dynamicBridgeHandler(bridgeToken, func(b *bridge.Bridge) http.HandlerFunc {
+		return b.HandleChatCompletions
+	}))
+	mux.HandleFunc("/v1/messages", dynamicBridgeHandler(bridgeToken, func(b *bridge.Bridge) http.HandlerFunc {
+		return b.HandleClaudeMessages
+	}))
+	mux.HandleFunc("/v1/models", dynamicBridgeHandler(bridgeToken, func(b *bridge.Bridge) http.HandlerFunc {
+		return b.HandleListModels
+	}))
+	mux.HandleFunc("/v1/responses", dynamicBridgeHandler(bridgeToken, func(b *bridge.Bridge) http.HandlerFunc {
+		return b.HandleCodexResponses
+	}))
+	mux.HandleFunc("/health", healthHandler(port, region))
+
+	mux.Handle("/api/v1/", apiHandler(pat, region, templateBase))
+	mux.Handle("/", webUIHandler())
+	return mux
+}
+
+func dynamicBridgeHandler(token string, pick func(*bridge.Bridge) http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if headlessBridge == nil {
+			bridgeUnavailableHandler(w, r)
+			return
+		}
+		authMiddleware(token, pick(headlessBridge))(w, r)
+	}
+}
+
+func bridgeUnavailableHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	fmt.Fprint(w, `{"error":{"message":"bridge is not configured; add and activate an account in the web UI","type":"bridge_unavailable"}}`)
 }
 
 func authMiddleware(token string, next http.HandlerFunc) http.HandlerFunc {
@@ -180,4 +233,43 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func intQuery(r *http.Request, key string, def int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// webUIHandler serves the embedded frontend static files for the Web UI.
+func webUIHandler() http.Handler {
+	dist, err := fs.Sub(assets, "frontend/dist")
+	if err != nil {
+		return http.NotFoundHandler()
+	}
+	fileServer := http.FileServer(http.FS(dist))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" || path == "ui" || path == "ui/" {
+			r.URL.Path = "/index.html"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		f, err := dist.Open(path)
+		if err != nil {
+			r.URL.Path = "/index.html"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		_ = f.Close()
+
+		fileServer.ServeHTTP(w, r)
+	})
 }

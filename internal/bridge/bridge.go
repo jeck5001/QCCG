@@ -95,7 +95,7 @@ func NewBridge(pat string, region account.Region, templateBase map[string]interf
 	mtoken := cosy.NewBase64Token()
 	mtype := cosy.NewHexToken(18)
 
-	logger.Info("Bridge using token: %s (prefix: %s)", pat[:10]+"...", pat[:4])
+	logger.Info("Bridge using token: %s", maskToken(pat))
 
 	var identity cosy.AuthIdentity
 	var name, id string
@@ -148,6 +148,16 @@ func NewBridge(pat string, region account.Region, templateBase map[string]interf
 		region:       region,
 		templateBase: templateBase,
 	}, nil
+}
+
+func maskToken(token string) string {
+	if len(token) <= 4 {
+		return "****"
+	}
+	if len(token) <= 10 {
+		return token[:4] + "..."
+	}
+	return token[:10] + "..."
 }
 
 // ListAvailableModels 通过 cosy 签名调用 /algo/api/v2/model/list 拉取上游模型清单。

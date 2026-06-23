@@ -74,6 +74,30 @@ cd frontend && npm ci && cd ..
 wails build
 ```
 
+## Docker Compose / NAS 部署
+
+适合在 NAS 上长期运行，容器会同时提供 Bridge API 和网页管理界面。
+
+```bash
+docker compose up -d
+```
+
+启动后访问：
+
+```text
+http://<NAS-IP>:8963
+```
+
+首次部署可以不配置 `QODER_PAT`，直接在网页端添加账号并设为激活账号。数据会持久化到 `qccg-data` volume。
+
+客户端 API 地址：
+
+```text
+http://<NAS-IP>:8963
+```
+
+如果暴露到非可信网络，请在 `.env` 中设置 `QCCG_BRIDGE_TOKEN`，并在客户端使用相同 API Key。
+
 ## 鸣谢
 
 - [qoder2api](https://github.com/cubk1/qoder2api) — 原始项目

@@ -1,5 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
 import { GetLogsSince, ClearLogs } from '../../bindings/qccg/app'
+import { isWebMode, getLogsSince as apiGetLogsSince, clearLogs as apiClearLogs } from '../api'
+
+// ── Dual-mode helpers ──────────────────────────────────────────────────────
+
+async function getLogsSince(afterSeq: number, limit: number) {
+  if (isWebMode()) return apiGetLogsSince(afterSeq, limit)
+  return GetLogsSince(afterSeq, limit)
+}
+
+async function clearLogs() {
+  if (isWebMode()) return apiClearLogs()
+  return ClearLogs()
+}
 
 interface LogEntry {
   seq: number
@@ -18,7 +31,7 @@ export default function LogsPage() {
   const fetchIncremental = async (reset = false) => {
     try {
       const afterSeq = reset ? 0 : lastSeqRef.current
-      const page = await GetLogsSince(afterSeq, reset ? 200 : 100)
+      const page = await getLogsSince(afterSeq, reset ? 200 : 100)
       if (!page?.entries?.length) return
       lastSeqRef.current = page.last_seq
       setLogs(prev => {
@@ -42,7 +55,7 @@ export default function LogsPage() {
   }, [autoRefresh])
 
   const handleClear = async () => {
-    await ClearLogs()
+    await clearLogs()
     lastSeqRef.current = 0
     setLogs([])
   }

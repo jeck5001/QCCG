@@ -6,8 +6,8 @@ services:
     ports:
       - "8963:8963"
     environment:
-      # Required: your Qoder PAT token
-      - QODER_PAT=${QODER_PAT}
+      # Optional: pre-seed a Qoder PAT. If omitted, add an account from the web UI.
+      - QODER_PAT=${QODER_PAT:-}
       # Region: "global" or "cn"
       - QCCG_REGION=${QCCG_REGION:-global}
       # Bridge port (must match ports mapping)

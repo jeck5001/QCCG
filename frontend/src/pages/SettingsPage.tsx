@@ -1,7 +1,35 @@
 import { useState, useEffect } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { GetSettings, SaveSettings, CleanupAllData, Confirm } from '../../bindings/qccg/app'
+import {
+  isWebMode,
+  getSettings as apiGetSettings,
+  saveSettings as apiSaveSettings,
+  cleanupAllData as apiCleanupAllData,
+} from '../api'
 import * as account from '../../bindings/qccg/account'
+
+// ── Dual-mode helpers ──────────────────────────────────────────────────────
+
+async function getSettings() {
+  if (isWebMode()) return apiGetSettings()
+  return GetSettings()
+}
+
+async function saveSettings(s: any) {
+  if (isWebMode()) return apiSaveSettings(s)
+  return SaveSettings(s)
+}
+
+async function cleanupAllData() {
+  if (isWebMode()) return apiCleanupAllData()
+  return CleanupAllData()
+}
+
+async function confirm(title: string, message: string): Promise<boolean> {
+  if (isWebMode()) return window.confirm(message)
+  return Confirm(title, message)
+}
 
 function generateToken(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -23,7 +51,7 @@ export default function SettingsPage() {
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    GetSettings().then((s: any) => {
+    getSettings().then((s: any) => {
       if (s) setSettings(s)
     }).catch((err: any) => {
       console.error('Failed to load settings:', err)
@@ -32,7 +60,7 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     try {
-      await SaveSettings(settings)
+      await saveSettings(settings)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {
@@ -41,14 +69,14 @@ export default function SettingsPage() {
   }
 
   const handleCleanupAll = async () => {
-    const ok = await Confirm('危险操作确认', '将清理 qccg 本地数据（~/.qccg）、客户端注入配置和 Keychain 密钥，是否继续？')
+    const ok = await confirm('危险操作确认', '将清理 qccg 本地数据（~/.qccg）、客户端注入配置和 Keychain 密钥，是否继续？')
     if (!ok) return
     try {
       setCleanupBusy(true)
       setCleanupMessage(null)
-      await CleanupAllData()
+      await cleanupAllData()
       setCleanupMessage('清理完成，建议重启应用。')
-      const s = await GetSettings().catch(() => null)
+      const s = await getSettings().catch(() => null)
       if (s) setSettings(s)
     } catch (err: any) {
       setCleanupMessage(`清理失败：${String(err?.message || err)}`)

@@ -13,6 +13,19 @@ import {
   HasClientConfigBackup,
   RestoreClientConfigFile,
 } from '../../bindings/qccg/app'
+import {
+  isWebMode,
+  getClientConfigs as apiGetClientConfigs,
+  listQoderModels as apiListQoderModels,
+  getStatus as apiGetStatus,
+  readClientConfigFile as apiReadClientConfigFile,
+  saveClientConfigFile as apiSaveClientConfigFile,
+  saveAdditionalClientConfigFile as apiSaveAdditionalClientConfigFile,
+  getSettings as apiGetSettings,
+  saveSettings as apiSaveSettings,
+  hasClientConfigBackup as apiHasClientConfigBackup,
+  restoreClientConfigFile as apiRestoreClientConfigFile,
+} from '../api'
 import * as account from '../../bindings/qccg/account'
 import * as main from '../../bindings/qccg/models'
 import claudeIcon from '../icons/clients/claude.svg'
@@ -318,6 +331,58 @@ function patchMappingPreview(content: string, format: string, mapping: Record<st
   return cleaned
 }
 
+// ============== Dual-mode helpers ==============
+
+async function getClientConfigs() {
+  if (isWebMode()) return apiGetClientConfigs()
+  return GetClientConfigs()
+}
+
+async function listQoderModels() {
+  if (isWebMode()) return apiListQoderModels()
+  return ListQoderModels()
+}
+
+async function getStatus() {
+  if (isWebMode()) return apiGetStatus()
+  return GetStatus()
+}
+
+async function readClientConfigFile(type: string) {
+  if (isWebMode()) return apiReadClientConfigFile(type)
+  return ReadClientConfigFile(type)
+}
+
+async function saveClientConfigFile(type: string, content: string) {
+  if (isWebMode()) return apiSaveClientConfigFile(type, content)
+  return SaveClientConfigFile(type, content)
+}
+
+async function saveAdditionalClientConfigFile(type: string, path: string, format: string, content: string) {
+  if (isWebMode()) return apiSaveAdditionalClientConfigFile(type, path, format, content)
+  return SaveAdditionalClientConfigFile(type, path, format, content)
+}
+
+async function getSettings() {
+  if (isWebMode()) return apiGetSettings()
+  return GetSettings()
+}
+
+async function saveSettings(s: any) {
+  if (isWebMode()) return apiSaveSettings(s)
+  return SaveSettings(s)
+}
+
+async function hasClientConfigBackup(type: string) {
+  if (isWebMode()) return apiHasClientConfigBackup(type)
+  return HasClientConfigBackup(type)
+}
+
+async function restoreClientConfigFile(type: string) {
+  if (isWebMode()) return apiRestoreClientConfigFile(type)
+  return RestoreClientConfigFile(type)
+}
+
 // ============== ClientConfigPage ==============
 
 export default function ClientConfigPage() {
@@ -352,7 +417,7 @@ export default function ClientConfigPage() {
     setModelsLoading(true)
     setModelsError(null)
     try {
-      const models = await ListQoderModels()
+      const models = await listQoderModels()
       setQoderModels(models || [])
       return models || []
     } catch (err: any) {
@@ -372,10 +437,10 @@ export default function ClientConfigPage() {
   // 初始加载：并行拉取所有数据
   useEffect(() => {
     Promise.all([
-      GetClientConfigs(),
+      getClientConfigs(),
       refreshQoderModels(),
-      GetStatus().catch(() => ({ running: false, port: 8963 })),
-      GetSettings().catch(() => null),
+      getStatus().catch(() => ({ running: false, port: 8963 })),
+      getSettings().catch(() => null),
     ]).then(([c, _m, s, settings]) => {
       setConfigs(c || [])
       if (s) setStatus(s as any)
@@ -394,7 +459,7 @@ export default function ClientConfigPage() {
     setFileError(null)
     setFileDirty(false)
     try {
-      const r = await ReadClientConfigFile(type)
+      const r = await readClientConfigFile(type)
       setFileContent(r?.content || '')
       setFileMeta({ path: r?.path || '', format: r?.format || '', existed: !!r?.existed })
       const extras = (r?.extra_files || []).map((f: any) => ({
@@ -404,7 +469,7 @@ export default function ClientConfigPage() {
         content: f.content || '',
       }))
       setExtraFiles(extras)
-      setHasBackup(await HasClientConfigBackup(type))
+      setHasBackup(await hasClientConfigBackup(type))
     } catch (err: any) {
       setFileError(String(err?.message || err))
       setFileContent('')
@@ -458,11 +523,11 @@ export default function ClientConfigPage() {
   const handleRestore = async () => {
     if (!activeType) return
     try {
-      await RestoreClientConfigFile(activeType)
+      await restoreClientConfigFile(activeType)
       setFileDirty(false)
       setMappingDirty(false)
       // 还原后只需重新加载文件和 configs（不需要重拉模型列表）
-      const [c, s] = await Promise.all([GetClientConfigs(), GetStatus().catch(() => null)])
+      const [c, s] = await Promise.all([getClientConfigs(), getStatus().catch(() => null)])
       setConfigs(c || [])
       if (s) setStatus(s as any)
       await loadFile(activeType)
@@ -502,26 +567,26 @@ export default function ClientConfigPage() {
     try {
       if (fileDirty) {
         const cleaned = stripMappingPreview(fileContent, fileMeta?.format || '')
-        await SaveClientConfigFile(activeType, cleaned)
+        await saveClientConfigFile(activeType, cleaned)
         for (const extra of extraFiles) {
-          await SaveAdditionalClientConfigFile(activeType, extra.path, extra.format, extra.content)
+          await saveAdditionalClientConfigFile(activeType, extra.path, extra.format, extra.content)
         }
         setFileDirty(false)
       }
       if (mappingDirty && pendingMapping) {
-        const cur = await GetSettings()
+        const cur = await getSettings()
         const merged = new account.Settings({
           ...(cur || {}),
           model_mapping: undefined,
           model_mappings: pendingMapping,
         } as any)
-        await SaveSettings(merged)
+        await saveSettings(merged)
         setSavedMappings(pendingMapping)
         setBridgeToken(cur?.bridge_token || QODER_API_KEY)
         setMappingDirty(false)
       }
       // 只刷新 configs（applied 状态），不重拉模型列表
-      const [c, s] = await Promise.all([GetClientConfigs(), GetStatus().catch(() => null)])
+      const [c, s] = await Promise.all([getClientConfigs(), getStatus().catch(() => null)])
       setConfigs(c || [])
       if (s) setStatus(s as any)
       await loadFile(activeType)

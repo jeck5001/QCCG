@@ -12,6 +12,14 @@ import {
   GetSettings,
   Confirm,
 } from '../../bindings/qccg/app'
+import {
+  isWebMode,
+  listAccounts as apiListAccounts,
+  setActiveAccount as apiSetActiveAccount,
+  deleteAccount as apiDeleteAccount,
+  reorderAccounts as apiReorderAccounts,
+  getSettings as apiGetSettings,
+} from '../api'
 
 interface Account {
   id: string
@@ -25,20 +33,33 @@ interface Account {
 }
 
 async function listAccounts(): Promise<Account[]> {
-  const accounts = await ListAccounts()
+  const accounts = isWebMode() ? await apiListAccounts() : await ListAccounts()
   return (accounts as unknown as Account[]) ?? []
 }
 
 async function setActiveAccount(id: string) {
+  if (isWebMode()) return apiSetActiveAccount(id)
   return SetActiveAccount(id)
 }
 
 async function deleteAccount(id: string) {
+  if (isWebMode()) return apiDeleteAccount(id)
   return DeleteAccount(id)
 }
 
 async function reorderAccounts(ids: string[]) {
+  if (isWebMode()) return apiReorderAccounts(ids)
   return ReorderAccounts(ids)
+}
+
+async function getSettings(): Promise<any> {
+  if (isWebMode()) return apiGetSettings()
+  return GetSettings()
+}
+
+async function confirm(title: string, message: string): Promise<boolean> {
+  if (isWebMode()) return window.confirm(message)
+  return Confirm(title, message)
 }
 
 export default function AccountsPage() {
@@ -60,7 +81,7 @@ export default function AccountsPage() {
       const active = list.find(a => a.active)
       if (active) setActiveRegion((active.region || 'global') as 'global' | 'cn')
     })
-    GetSettings()
+    getSettings()
       .then((s: any) => { if (s?.quota_refresh_interval != null) setRefreshInterval(s.quota_refresh_interval) })
       .catch(() => {})
   }, [])
@@ -69,7 +90,7 @@ export default function AccountsPage() {
   const handleDelete = async (id: string) => {
     const target = accounts.find(a => a.id === id)
     if (target?.active) return
-    const ok = await Confirm('删除账号', '确认删除此账号？此操作不可撤销。')
+    const ok = await confirm('删除账号', '确认删除此账号？此操作不可撤销。')
     if (ok) deleteAccount(id).then(refresh)
   }
 

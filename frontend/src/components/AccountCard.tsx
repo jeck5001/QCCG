@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GetAccountQuota } from '../../bindings/qccg/app'
+import { isWebMode, getAccountQuota as apiGetAccountQuota } from '../api'
 
 interface Account {
   id: string
@@ -93,7 +94,8 @@ export default function AccountCard({ account: acct, onActivate, onDelete, refre
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchQuota = () => {
-    GetAccountQuota(acct.id)
+    const promise = isWebMode() ? apiGetAccountQuota(acct.id) : GetAccountQuota(acct.id)
+    promise
       .then((q: any) => {
         if (q) { setQuota(q); setFetchedAt(Date.now()); setQuotaError(false) }
       })

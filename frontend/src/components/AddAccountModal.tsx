@@ -1,7 +1,27 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Globe, Server } from 'lucide-react'
 import { AddAccountByPAT, StartOAuthLogin, WaitOAuthLogin, CancelOAuthLogin } from '../../bindings/qccg/app'
-import { Browser, Events } from '@wailsio/runtime'
+import {
+  isWebMode,
+  addAccountByPAT as apiAddAccountByPAT,
+  startOAuthLogin as apiStartOAuthLogin,
+  waitOAuthLogin as apiWaitOAuthLogin,
+  cancelOAuthLogin as apiCancelOAuthLogin,
+} from '../api'
+
+// Lazy-load Wails runtime only in desktop mode to avoid import errors in web browsers
+let Browser: any = null
+let Events: any = null
+if (!isWebMode()) {
+  try {
+    // @ts-ignore -- dynamic require for Wails runtime
+    const wailsRuntime = require('@wailsio/runtime')
+    Browser = wailsRuntime.Browser
+    Events = wailsRuntime.Events
+  } catch {
+    console.warn('[QCCG] @wailsio/runtime not available, running in web-only mode')
+  }
+}
 
 type Mode = 'select' | 'pat' | 'oauth-waiting'
 
@@ -21,7 +41,8 @@ export default function AddAccountModal({ onClose }: Props) {
     setLoading(true)
     setError('')
     try {
-      await AddAccountByPAT(pat.trim(), region)
+      if (isWebMode()) await apiAddAccountByPAT(pat.trim(), region)
+      else await AddAccountByPAT(pat.trim(), region)
       onClose()
     } catch (e: any) {
       setError(String(e))
@@ -30,32 +51,66 @@ export default function AddAccountModal({ onClose }: Props) {
     }
   }
 
+  const oauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   const handleOAuth = async () => {
     setLoading(true)
     setError('')
     try {
-      const session = await StartOAuthLogin(region)
+      const session = isWebMode()
+        ? await apiStartOAuthLogin(region)
+        : await StartOAuthLogin(region)
       if (!session) throw new Error('启动 OAuth 失败')
       setLoginID(session.login_id)
       setLoginURL(session.login_url)
       setMode('oauth-waiting')
 
-      Browser.OpenURL(session.login_url)
-      Events.Once('oauth:success', () => onClose())
-      Events.Once('oauth:error', (ev) => {
-        const msg = Array.isArray(ev.data) ? ev.data[0] : ev.data
-        setError(String(msg ?? '授权失败'))
-        setMode('select')
-      })
-      WaitOAuthLogin(session.login_id)
+      if (isWebMode()) {
+        // Web mode: show URL as clickable link, poll for completion
+        // No Browser.OpenURL or Events.Once available
+        oauthPollRef.current = setInterval(async () => {
+          try {
+            const account = await apiWaitOAuthLogin(session.login_id)
+            if (account) {
+              if (oauthPollRef.current) clearInterval(oauthPollRef.current)
+              onClose()
+            }
+          } catch (err: any) {
+            if (oauthPollRef.current) clearInterval(oauthPollRef.current)
+            setError(String(err?.message || err))
+            setMode('select')
+          }
+        }, 2000)
+      } else {
+        // Wails desktop mode: open system browser, listen for events
+        if (Browser) Browser.OpenURL(session.login_url)
+        if (Events) {
+          Events.Once('oauth:success', () => onClose())
+          Events.Once('oauth:error', (ev: { data?: unknown }) => {
+            const msg = Array.isArray(ev.data) ? ev.data[0] : ev.data
+            setError(String(msg ?? '授权失败'))
+            setMode('select')
+          })
+        }
+        WaitOAuthLogin(session.login_id)
+      }
     } catch (e: any) {
       setError(String(e))
       setLoading(false)
     }
   }
 
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (oauthPollRef.current) clearInterval(oauthPollRef.current) }
+  }, [])
+
   const handleCancel = () => {
-    if (loginID) CancelOAuthLogin(loginID)
+    if (oauthPollRef.current) { clearInterval(oauthPollRef.current); oauthPollRef.current = null }
+    if (loginID) {
+      if (isWebMode()) apiCancelOAuthLogin(loginID)
+      else CancelOAuthLogin(loginID)
+    }
     onClose()
   }
 
@@ -127,9 +182,21 @@ export default function AddAccountModal({ onClose }: Props) {
         {mode === 'oauth-waiting' && (
           <div className="oauth-waiting">
             <div className="oauth-waiting-icon">🌐</div>
-            <p className="oauth-waiting-title">浏览器已打开授权页面</p>
-            <p className="oauth-waiting-hint">在浏览器中完成授权后将自动返回</p>
-            <p className="oauth-waiting-url">{loginURL}</p>
+            {isWebMode() ? (
+              <>
+                <p className="oauth-waiting-title">请点击下方链接完成授权</p>
+                <p className="oauth-waiting-hint">在新标签页中完成授权后将自动返回</p>
+                <a href={loginURL} target="_blank" rel="noopener noreferrer" className="oauth-waiting-link">
+                  {loginURL}
+                </a>
+              </>
+            ) : (
+              <>
+                <p className="oauth-waiting-title">浏览器已打开授权页面</p>
+                <p className="oauth-waiting-hint">在浏览器中完成授权后将自动返回</p>
+                <p className="oauth-waiting-url">{loginURL}</p>
+              </>
+            )}
             <div className="oauth-waiting-status">
               <span className="oauth-waiting-dot" />
               等待授权中...

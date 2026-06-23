@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react'
-import { Events } from '@wailsio/runtime'
+import { useState, useEffect, useRef } from 'react'
 import appLogo from './assets/qoder.png'
 import AccountsPage from './pages/AccountsPage'
 import SettingsPage from './pages/SettingsPage'
@@ -8,7 +7,19 @@ import LogsPage from './pages/LogsPage'
 import StatusIndicator from './components/StatusIndicator'
 import UpdateModal from './components/UpdateModal'
 import { ApplyUpdate, GetVersion, CheckUpdate } from '../bindings/qccg/app'
+import { isWebMode, getVersion as apiGetVersion, checkUpdate as apiCheckUpdate, applyUpdate as apiApplyUpdate } from './api'
 import './App.css'
+
+// Lazy-load Wails runtime only in desktop mode to avoid import errors in web browsers
+let Events: typeof import('@wailsio/runtime').Events | null = null
+if (!isWebMode()) {
+  try {
+    // @ts-ignore -- dynamic require for Wails runtime
+    Events = require('@wailsio/runtime').Events
+  } catch {
+    console.warn('[QCCG] @wailsio/runtime not available, running in web-only mode')
+  }
+}
 
 type Page = 'accounts' | 'settings' | 'clients' | 'logs'
 
@@ -22,6 +33,22 @@ interface UpdateInfo {
   file_size: number
 }
 
+// ── Dual-mode helpers ──────────────────────────────────────────────────────
+async function getVersion() {
+  if (isWebMode()) return apiGetVersion()
+  return GetVersion()
+}
+
+async function checkUpdate() {
+  if (isWebMode()) return apiCheckUpdate()
+  return CheckUpdate()
+}
+
+async function applyUpdate() {
+  if (isWebMode()) return apiApplyUpdate()
+  return ApplyUpdate()
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>('accounts')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
@@ -32,12 +59,33 @@ export default function App() {
   const [version, setVersion] = useState<string>('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [upToDate, setUpToDate] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    GetVersion().then(setVersion).catch(() => {})
+    getVersion().then(setVersion).catch(() => {})
   }, [])
 
+  // In web mode, poll for updates periodically instead of using Wails events.
+  // In Wails mode, subscribe to Events.On for real-time notifications.
   useEffect(() => {
+    if (isWebMode()) {
+      // Web mode: poll for update status
+      const poll = async () => {
+        try {
+          const info = await checkUpdate()
+          if ((info as UpdateInfo)?.has_update) {
+            setUpdateInfo(info as UpdateInfo)
+            setShowUpdateModal(true)
+          }
+        } catch {}
+      }
+      pollRef.current = setInterval(poll, 60_000)
+      poll()
+      return () => { if (pollRef.current) clearInterval(pollRef.current) }
+    }
+
+    // Wails desktop mode
+    if (!Events) return
     const unsubAvail = Events.On('update-available', (event: any) => {
       const data = event?.data
       if (data?.has_update) { setUpdateInfo(data); setShowUpdateModal(true) }
@@ -54,8 +102,8 @@ export default function App() {
     setCheckingUpdate(true)
     setUpToDate(false)
     try {
-      const info = await CheckUpdate()
-      if (info?.has_update) {
+      const info = await checkUpdate()
+      if ((info as UpdateInfo)?.has_update) {
         setUpdateInfo(info as UpdateInfo)
         setShowUpdateModal(true)
       } else {
@@ -72,7 +120,7 @@ export default function App() {
     setUpdateProgress(0)
     setUpdateError(null)
     try {
-      await ApplyUpdate()
+      await applyUpdate()
       // 更新脚本已启动， app 即将退出
     } catch (e: any) {
       setUpdateError(e?.message ?? String(e))

@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { GetStatus, StartBridge, StopBridge } from '../../bindings/qccg/app'
+import { isWebMode, getStatus as apiGetStatus, startBridge as apiStartBridge, stopBridge as apiStopBridge } from '../api'
 
 interface Status { running: boolean; port: number; active_account: string }
 
 async function getStatus(): Promise<Status> {
+  if (isWebMode()) return apiGetStatus() as unknown as Status
   return GetStatus() as unknown as Status
 }
 
 async function startBridge() {
   try {
     console.log('[StatusBar] Starting bridge...')
-    const result = await StartBridge()
+    const result = isWebMode() ? await apiStartBridge() : await StartBridge()
     console.log('[StatusBar] Start result:', result)
     return result
   } catch (err) {
@@ -22,7 +24,7 @@ async function startBridge() {
 async function stopBridge() {
   try {
     console.log('[StatusBar] Stopping bridge...')
-    const result = await StopBridge()
+    const result = isWebMode() ? await apiStopBridge() : await StopBridge()
     console.log('[StatusBar] Stop result:', result)
     return result
   } catch (err) {
