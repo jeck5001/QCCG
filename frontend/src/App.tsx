@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import appLogo from './assets/qoder.png'
 import AccountsPage from './pages/AccountsPage'
 import SettingsPage from './pages/SettingsPage'
@@ -7,7 +7,7 @@ import LogsPage from './pages/LogsPage'
 import StatusIndicator from './components/StatusIndicator'
 import UpdateModal from './components/UpdateModal'
 import { ApplyUpdate, GetVersion, CheckUpdate } from '../bindings/qccg/app'
-import { isWebMode, getVersion as apiGetVersion, checkUpdate as apiCheckUpdate, applyUpdate as apiApplyUpdate } from './api'
+import { isWebMode, getVersion as apiGetVersion } from './api'
 import './App.css'
 
 // Lazy-load Wails runtime only in desktop mode to avoid import errors in web browsers
@@ -40,12 +40,10 @@ async function getVersion() {
 }
 
 async function checkUpdate() {
-  if (isWebMode()) return apiCheckUpdate()
   return CheckUpdate()
 }
 
 async function applyUpdate() {
-  if (isWebMode()) return apiApplyUpdate()
   return ApplyUpdate()
 }
 
@@ -59,29 +57,16 @@ export default function App() {
   const [version, setVersion] = useState<string>('')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [upToDate, setUpToDate] = useState(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {})
   }, [])
 
-  // In web mode, poll for updates periodically instead of using Wails events.
-  // In Wails mode, subscribe to Events.On for real-time notifications.
+  // Update installation is a desktop-only flow. Containers are updated by
+  // pulling and recreating the Docker image, so web mode must not show this UI.
   useEffect(() => {
     if (isWebMode()) {
-      // Web mode: poll for update status
-      const poll = async () => {
-        try {
-          const info = await checkUpdate()
-          if ((info as UpdateInfo)?.has_update) {
-            setUpdateInfo(info as UpdateInfo)
-            setShowUpdateModal(true)
-          }
-        } catch {}
-      }
-      pollRef.current = setInterval(poll, 60_000)
-      poll()
-      return () => { if (pollRef.current) clearInterval(pollRef.current) }
+      return
     }
 
     // Wails desktop mode
@@ -98,6 +83,7 @@ export default function App() {
   }, [])
 
   async function handleCheckUpdate() {
+    if (isWebMode()) return
     if (checkingUpdate) return
     setCheckingUpdate(true)
     setUpToDate(false)
@@ -115,6 +101,7 @@ export default function App() {
   }
 
   async function handleUpdate() {
+    if (isWebMode()) return
     if (!updateInfo) return
     setUpdating(true)
     setUpdateProgress(0)
@@ -148,8 +135,8 @@ export default function App() {
           {(version || updateInfo) && (
             <span
               className={`topbar-version${checkingUpdate ? ' topbar-version--checking' : ''}${upToDate ? ' topbar-version--ok' : ''}${updateInfo ? ' topbar-version--update' : ''}`}
-              onClick={updateInfo ? () => setShowUpdateModal(true) : handleCheckUpdate}
-              title={updateInfo ? `有新版本 ${updateInfo.latest}，点击查看` : '点击检查更新'}
+              onClick={isWebMode() ? undefined : (updateInfo ? () => setShowUpdateModal(true) : handleCheckUpdate)}
+              title={isWebMode() ? '容器版本，请通过 Docker Compose 更新镜像' : (updateInfo ? `有新版本 ${updateInfo.latest}，点击查看` : '点击检查更新')}
             >
               {updateInfo && (
                 <span className="topbar-update-icon">
@@ -163,14 +150,16 @@ export default function App() {
           )}
         </div>
       </header>
-      <UpdateModal
-        updateInfo={showUpdateModal ? updateInfo : null}
-        onDismiss={() => { if (!updateInfo?.force_update) setShowUpdateModal(false) }}
-        onUpdate={handleUpdate}
-        updating={updating}
-        progress={updateProgress}
-        error={updateError}
-      />
+      {!isWebMode() && (
+        <UpdateModal
+          updateInfo={showUpdateModal ? updateInfo : null}
+          onDismiss={() => { if (!updateInfo?.force_update) setShowUpdateModal(false) }}
+          onUpdate={handleUpdate}
+          updating={updating}
+          progress={updateProgress}
+          error={updateError}
+        />
+      )}
       <nav className="sidebar">
         <div className="sidebar-brand" aria-hidden="true">
           <img src={appLogo} alt="" className="sidebar-logo" />

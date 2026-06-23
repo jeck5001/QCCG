@@ -14,6 +14,8 @@ RUN npm run build
 # ==========================================
 FROM golang:1.25-alpine AS go-builder
 
+ARG VERSION=0.0.0-dev
+
 WORKDIR /app
 
 # Install build dependencies
@@ -32,7 +34,7 @@ COPY --from=frontend-builder /app/frontend/dist frontend/dist/
 # Build headless bridge binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -tags headless -trimpath \
-    -ldflags="-w -s" \
+    -ldflags="-w -s -X qccg/internal/updater.Version=${VERSION}" \
     -o qccg-bridge .
 
 # ==========================================
