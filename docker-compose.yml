@@ -1,6 +1,6 @@
 services:
   qccg-bridge:
-    image: ghcr.io/wangtufly/qccg:latest
+    image: ghcr.io/jeck5001/qccg:latest
     container_name: qccg-bridge
     restart: unless-stopped
     ports:
