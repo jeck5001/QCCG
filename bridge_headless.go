@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
@@ -254,22 +256,41 @@ func webUIHandler() http.Handler {
 		return http.NotFoundHandler()
 	}
 	fileServer := http.FileServer(http.FS(dist))
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		serveEmbeddedFile(w, r, dist, "index.html")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" || path == "ui" || path == "ui/" {
-			r.URL.Path = "/index.html"
-			fileServer.ServeHTTP(w, r)
+			serveIndex(w, r)
 			return
 		}
 
 		f, err := dist.Open(path)
 		if err != nil {
-			r.URL.Path = "/index.html"
-			fileServer.ServeHTTP(w, r)
+			serveIndex(w, r)
 			return
 		}
 		_ = f.Close()
 
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func serveEmbeddedFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	stat, err := fs.Stat(fsys, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if contentType := mime.TypeByExtension(filepath.Ext(name)); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	http.ServeContent(w, r, stat.Name(), stat.ModTime(), bytes.NewReader(data))
 }

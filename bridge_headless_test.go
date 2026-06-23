@@ -37,6 +37,21 @@ func TestHeadlessManagementAPIIsMountedWithFullPrefix(t *testing.T) {
 	}
 }
 
+func TestWebUIRootServesIndexWithoutRedirect(t *testing.T) {
+	handler := webUIHandler()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / returned %d, want %d; location=%q", rr.Code, http.StatusOK, rr.Header().Get("Location"))
+	}
+	if location := rr.Header().Get("Location"); location != "" {
+		t.Fatalf("GET / returned unexpected redirect location %q", location)
+	}
+}
+
 func TestResolveHeadlessTokenAllowsWebOnlyStartup(t *testing.T) {
 	t.Setenv("QODER_PAT", "")
 	token, err := resolveHeadlessToken(context.Background())
